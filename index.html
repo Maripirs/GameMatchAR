@@ -49,19 +49,36 @@
             <button class="themeOptionButton" type="button" data-theme-option="dark" role="radio" aria-checked="false">Dark</button>
           </div>
         </section>
-        <form id="contributorForm">
-          <div id="contributorHeader">
-            <strong>Contributor Mode</strong>
-            <span id="contributorModeState">Off</span>
+        <section id="contributorArea" aria-label="Contributor tools">
+          <div id="contributorTabs" role="tablist" aria-label="Contributor sections" hidden>
+            <button class="contributorTabButton" type="button" role="tab" data-contributor-tab="mode" aria-selected="true">Mode</button>
+            <button class="contributorTabButton" type="button" role="tab" data-contributor-tab="latest" aria-selected="false">Latest Images</button>
           </div>
-          <label>
-            <span>Password</span>
-            <input id="contributorPassword" type="password" autocomplete="current-password" />
-          </label>
-          <button id="contributorLoginButton" type="submit">Log In</button>
-          <button id="contributorLogoutButton" class="ghostButton" type="button" hidden>Exit Contributor Mode</button>
-          <p id="contributorStatus"></p>
-        </form>
+          <form id="contributorForm" data-contributor-panel="mode">
+            <div id="contributorHeader">
+              <strong>Contributor Mode</strong>
+              <span id="contributorModeState">Off</span>
+            </div>
+            <label>
+              <span>Password</span>
+              <input id="contributorPassword" type="password" autocomplete="current-password" />
+            </label>
+            <button id="contributorLoginButton" type="submit">Log In</button>
+            <button id="contributorLogoutButton" class="ghostButton" type="button" hidden>Exit Contributor Mode</button>
+            <p id="contributorStatus"></p>
+          </form>
+          <section id="contributorReviewPanel" data-contributor-panel="latest" hidden>
+            <div id="contributorReviewHeader">
+              <div>
+                <strong>Latest Images</strong>
+                <span id="contributorReviewCount"></span>
+              </div>
+              <button id="contributorReviewRefreshButton" class="ghostButton" type="button">Refresh</button>
+            </div>
+            <p id="contributorReviewStatus">Log in to review saved references.</p>
+            <div id="contributorReviewGrid"></div>
+          </section>
+        </section>
       </div>
     </section>
 

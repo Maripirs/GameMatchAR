@@ -17,6 +17,8 @@ const DETAIL_MARGIN_THRESHOLD = 0.012;
 const SCORE_DISPLAY_DECIMALS = 3;
 const SCORE_THRESHOLD_EPSILON = 0.0005;
 const MAX_CORRECTION_SUGGESTIONS = 5;
+const CONTRIBUTOR_RECENT_REFERENCE_LIMIT = 30;
+const CONTRIBUTOR_REVIEW_TIMEOUT_MS = 15000;
 const CARD_DISMISS_MIN_DISTANCE = 86;
 const CARD_DISMISS_MAX_DISTANCE = 150;
 const CARD_DISMISS_RATIO = 0.32;
@@ -60,6 +62,14 @@ const contributorLoginButton = document.getElementById("contributorLoginButton")
 const contributorLogoutButton = document.getElementById("contributorLogoutButton");
 const contributorModeState = document.getElementById("contributorModeState");
 const contributorStatus = document.getElementById("contributorStatus");
+const contributorTabs = document.getElementById("contributorTabs");
+const contributorTabButtons = Array.from(document.querySelectorAll("[data-contributor-tab]"));
+const contributorPanels = Array.from(document.querySelectorAll("[data-contributor-panel]"));
+const contributorReviewPanel = document.getElementById("contributorReviewPanel");
+const contributorReviewRefreshButton = document.getElementById("contributorReviewRefreshButton");
+const contributorReviewStatus = document.getElementById("contributorReviewStatus");
+const contributorReviewCount = document.getElementById("contributorReviewCount");
+const contributorReviewGrid = document.getElementById("contributorReviewGrid");
 const themeColorMeta = document.querySelector('meta[name="theme-color"]');
 const systemLightThemeQuery = window.matchMedia?.("(prefers-color-scheme: light)");
 const cropHoverPreviewQuery = window.matchMedia?.("(hover: hover) and (pointer: fine)");
@@ -84,6 +94,9 @@ let startupStatusActive = true;
 let contributorMode = false;
 let contributorPassword = "";
 let contributorApiBase = configuredApiBase();
+let contributorActiveTab = "mode";
+let contributorReviewLoadPromise = null;
+let contributorReviewImageUrls = [];
 let themePreference = "auto";
 let cropZoomPreview = null;
 let cropViewer = null;
@@ -111,6 +124,10 @@ for (const button of themeOptionButtons) {
 }
 contributorForm.addEventListener("submit", loginContributor);
 contributorLogoutButton.addEventListener("click", logoutContributor);
+for (const button of contributorTabButtons) {
+  button.addEventListener("click", () => selectContributorTab(button.dataset.contributorTab));
+}
+contributorReviewRefreshButton.addEventListener("click", () => loadContributorReview({ force: true }));
 [playersFilter, timeFilter, complexityFilter].forEach((control) => {
   control.addEventListener("input", handleFilterChange);
   control.addEventListener("change", handleFilterChange);
@@ -1859,7 +1876,7 @@ async function loginContributor(event) {
     contributorPasswordInput.value = "";
     contributorStatus.textContent = "Contributor mode enabled.";
     setContributorMode(true);
-    setInfoPanelOpen(false);
+    selectContributorTab("latest");
     setStatus("Contributor mode on. Use OK or X on each match.");
   } catch (error) {
     console.error(error);
@@ -1870,6 +1887,8 @@ async function loginContributor(event) {
 function logoutContributor() {
   contributorPassword = "";
   setContributorMode(false);
+  clearContributorReview();
+  selectContributorTab("mode", { load: false });
   contributorStatus.textContent = "Contributor mode disabled.";
   setStatus("Contributor mode off.");
 }
@@ -1878,9 +1897,14 @@ function setContributorMode(enabled) {
   contributorMode = enabled;
   document.body.classList.toggle("contributorMode", contributorMode);
   contributorModeState.textContent = contributorMode ? "On" : "Off";
+  contributorTabs.hidden = !contributorMode;
   contributorLoginButton.hidden = contributorMode;
   contributorLogoutButton.hidden = !contributorMode;
   contributorPasswordInput.disabled = contributorMode;
+
+  if (!contributorMode) {
+    contributorReviewLoadPromise = null;
+  }
 
   for (const card of currentResultCards) {
     updateFeedbackActions(card);
@@ -1907,6 +1931,9 @@ function setInfoPanelOpen(open, { focusContributor = false } = {}) {
     contributorStatus.textContent = contributorMode
       ? "Contributor mode is active."
       : "Enter the contributor password.";
+    if (contributorMode && contributorActiveTab === "latest") {
+      loadContributorReview();
+    }
     window.setTimeout(() => {
       if (focusContributor) {
         contributorPasswordInput.focus();
@@ -1915,6 +1942,300 @@ function setInfoPanelOpen(open, { focusContributor = false } = {}) {
       }
     }, 0);
   }
+}
+
+function selectContributorTab(tab, { load = true } = {}) {
+  const nextTab = tab === "latest" ? "latest" : "mode";
+
+  if (nextTab === "latest" && (!contributorMode || !contributorPassword)) {
+    contributorStatus.textContent = "Log in before reviewing saved images.";
+    contributorActiveTab = "mode";
+  } else {
+    contributorActiveTab = nextTab;
+  }
+
+  for (const button of contributorTabButtons) {
+    const selected = button.dataset.contributorTab === contributorActiveTab;
+    button.classList.toggle("isSelected", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+
+  for (const panel of contributorPanels) {
+    panel.hidden = panel.dataset.contributorPanel !== contributorActiveTab;
+  }
+
+  if (contributorActiveTab === "latest" && load) {
+    loadContributorReview();
+  }
+}
+
+async function loadContributorReview({ force = false } = {}) {
+  if (!contributorMode || !contributorPassword) {
+    contributorReviewStatus.textContent = "Log in to review saved references.";
+    selectContributorTab("mode", { load: false });
+    return;
+  }
+
+  if (force) {
+    contributorReviewLoadPromise = null;
+  }
+
+  if (contributorReviewLoadPromise) {
+    return contributorReviewLoadPromise;
+  }
+
+  contributorReviewRefreshButton.disabled = true;
+  contributorReviewStatus.textContent = "Loading latest saved images...";
+
+  contributorReviewLoadPromise = fetchWithTimeout(
+    apiUrl(`/contributor/recent-references?limit=${CONTRIBUTOR_RECENT_REFERENCE_LIMIT}`, contributorApiBase),
+    {
+      cache: "no-store",
+      headers: {
+        [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword,
+      },
+    },
+    CONTRIBUTOR_REVIEW_TIMEOUT_MS
+  )
+    .then(async (response) => {
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result.detail || `Could not load references: ${response.status}`);
+      }
+
+      renderContributorReview(result.references || [], result.total || 0);
+      return result;
+    })
+    .catch((error) => {
+      console.error(error);
+      contributorReviewStatus.textContent = error.message || "Could not load latest images.";
+      return null;
+    })
+    .finally(() => {
+      contributorReviewRefreshButton.disabled = false;
+      contributorReviewLoadPromise = null;
+    });
+
+  return contributorReviewLoadPromise;
+}
+
+function renderContributorReview(references, total) {
+  clearContributorReviewImages();
+  contributorReviewGrid.replaceChildren();
+  contributorReviewCount.textContent = references.length
+    ? `${references.length}${total > references.length ? `/${total}` : ""}`
+    : "";
+
+  if (!references.length) {
+    contributorReviewStatus.textContent = "No saved references yet.";
+    return;
+  }
+
+  contributorReviewStatus.textContent = "Review recent contributor references.";
+
+  for (const reference of references) {
+    contributorReviewGrid.append(createContributorReviewCard(reference));
+  }
+}
+
+function createContributorReviewCard(reference) {
+  const card = document.createElement("article");
+  const image = document.createElement("img");
+  const body = document.createElement("div");
+  const title = document.createElement("strong");
+  const meta = document.createElement("div");
+  const quality = document.createElement("div");
+  const feedback = document.createElement("div");
+  const actions = document.createElement("div");
+  const confirmButton = document.createElement("button");
+  const denyButton = document.createElement("button");
+  const bggLink = document.createElement("a");
+  const status = document.createElement("div");
+
+  card.className = "contributorReviewCard";
+  image.className = "contributorReviewImage";
+  body.className = "contributorReviewBody";
+  meta.className = "contributorReviewMeta";
+  quality.className = "contributorReviewQuality";
+  feedback.className = "contributorReviewFeedback";
+  actions.className = "contributorReviewActions";
+  status.className = "contributorReviewItemStatus";
+
+  image.alt = reference.name;
+  image.loading = "lazy";
+  image.decoding = "async";
+  title.textContent = reference.name;
+  meta.textContent = `BGG ${reference.id} · ${formatReferenceDate(reference.created_at)}`;
+  quality.textContent = formatReferenceQuality(reference);
+  feedback.textContent = formatReferenceFeedback(reference.feedback);
+  confirmButton.type = "button";
+  denyButton.type = "button";
+  confirmButton.textContent = "Looks right";
+  denyButton.textContent = "Wrong label";
+  bggLink.href = reference.bgg_url || `https://boardgamegeek.com/boardgame/${reference.id}`;
+  bggLink.target = "_blank";
+  bggLink.rel = "noreferrer";
+  bggLink.textContent = "BGG";
+  status.textContent = "Waiting for review";
+
+  loadContributorReferenceImage(reference, image);
+  confirmButton.addEventListener("click", () => submitContributorReferenceReview(reference, "confirm", {
+    card,
+    confirmButton,
+    denyButton,
+    feedback,
+    status,
+  }));
+  denyButton.addEventListener("click", () => submitContributorReferenceReview(reference, "deny", {
+    card,
+    confirmButton,
+    denyButton,
+    feedback,
+    status,
+  }));
+
+  actions.append(confirmButton, denyButton, bggLink);
+  body.append(title, meta, quality, feedback, actions, status);
+  card.append(image, body);
+
+  return card;
+}
+
+async function loadContributorReferenceImage(reference, image) {
+  try {
+    const response = await fetchWithTimeout(
+      apiUrl(`/contributor/reference-image?path=${encodeURIComponent(reference.image_path)}`, contributorApiBase),
+      {
+        cache: "no-store",
+        headers: {
+          [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword,
+        },
+      },
+      CONTRIBUTOR_REVIEW_TIMEOUT_MS
+    );
+
+    if (!response.ok) {
+      throw new Error(`Image failed: ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+
+    contributorReviewImageUrls.push(url);
+    image.src = url;
+  } catch (error) {
+    console.warn(`Could not load reference image ${reference.image_path}:`, error);
+    image.classList.add("loadFailed");
+    image.alt = "Image unavailable";
+  }
+}
+
+async function submitContributorReferenceReview(reference, action, controls) {
+  const { card, confirmButton, denyButton, feedback, status } = controls;
+
+  if (!contributorMode || !contributorPassword) {
+    selectContributorTab("mode", { load: false });
+    contributorPasswordInput.focus();
+    return;
+  }
+
+  confirmButton.disabled = true;
+  denyButton.disabled = true;
+  status.textContent = action === "confirm" ? "Confirming..." : "Flagging...";
+
+  try {
+    const formData = new FormData();
+
+    formData.append("action", action);
+    formData.append("game_id", String(reference.id));
+    formData.append("game_name", reference.name);
+    formData.append("reference_image_path", reference.image_path);
+
+    const response = await fetch(apiUrl("/contributor/reference-feedback", contributorApiBase), {
+      method: "POST",
+      headers: {
+        [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword,
+      },
+      body: formData,
+    });
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok || !result.ok) {
+      throw new Error(result.detail || `Feedback failed: ${response.status}`);
+    }
+
+    reference.feedback = result.feedback || reference.feedback || {};
+    feedback.textContent = formatReferenceFeedback(reference.feedback);
+    card.classList.toggle("reviewConfirmed", action === "confirm");
+    card.classList.toggle("reviewDenied", action === "deny");
+    status.textContent = action === "confirm" ? "Marked right" : "Marked wrong";
+    setStatus(`${reference.name} review saved.`);
+  } catch (error) {
+    console.error(error);
+    status.textContent = error.message || "Could not save review.";
+    confirmButton.disabled = false;
+    denyButton.disabled = false;
+  }
+}
+
+function clearContributorReview() {
+  clearContributorReviewImages();
+  contributorReviewGrid.replaceChildren();
+  contributorReviewCount.textContent = "";
+  contributorReviewStatus.textContent = "Log in to review saved references.";
+}
+
+function clearContributorReviewImages() {
+  for (const url of contributorReviewImageUrls) {
+    URL.revokeObjectURL(url);
+  }
+
+  contributorReviewImageUrls = [];
+}
+
+function formatReferenceDate(value) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "recent";
+  }
+
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatReferenceQuality(reference) {
+  const parts = [];
+
+  if (reference.image_width && reference.image_height) {
+    parts.push(`${reference.image_width}x${reference.image_height}`);
+  }
+
+  if (reference.quality_score) {
+    parts.push(`quality ${reference.quality_score.toFixed(2)}`);
+  }
+
+  if (reference.cleanliness_score) {
+    parts.push(`clean ${reference.cleanliness_score.toFixed(2)}`);
+  }
+
+  return parts.length ? parts.join(" · ") : "No quality score yet";
+}
+
+function formatReferenceFeedback(feedback = {}) {
+  const positive = cleanNumber(feedback.positive);
+  const falsePositive = cleanNumber(feedback.false_positive);
+
+  if (!positive && !falsePositive) {
+    return "No feedback yet";
+  }
+
+  return `Feedback +${positive} / -${falsePositive}`;
 }
 
 function updateFeedbackActions(card) {
