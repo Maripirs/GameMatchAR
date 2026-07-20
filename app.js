@@ -90,6 +90,7 @@ let gameSearchLoadPromise = null;
 let gameSearchIndex = [];
 let gameSearchById = new Map();
 let currentResultCards = [];
+let selectedMatchCard = null;
 let startupStatusActive = true;
 let contributorMode = false;
 let contributorPassword = "";
@@ -134,10 +135,7 @@ contributorReviewRefreshButton.addEventListener("click", () => loadContributorRe
 });
 window.addEventListener("resize", () => {
   hideCropZoomPreview();
-
-  if (activeSourceCanvas?.lastDetections) {
-    drawDetections(activeSourceCanvas.lastDetections, activeSourceCanvas, activeDisplayElement);
-  }
+  redrawActiveDetections();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && isCropViewerOpen()) {
@@ -627,11 +625,14 @@ function createMatchCard(cropCanvas, detection, index) {
   feedbackActions.append(confirmButton, denyButton, feedbackStatus);
   body.append(name, meta, score, fit, details, feedbackActions, correctionPanel);
   card.append(dismissButton, cropCanvas, body);
+  card.tabIndex = 0;
+  card.setAttribute("aria-label", `Highlight box ${index + 1} in the photo`);
   resultsGrid.append(card);
 
   const cardApi = {
     card,
     cropCanvas,
+    detection,
     matches: [],
     details: null,
     isConfident: false,
@@ -673,6 +674,7 @@ function createMatchCard(cropCanvas, detection, index) {
         card.dataset.score = "-1";
         updateFeedbackActions(this);
         this.applyFilters();
+        refreshSelectedMatchCard(this);
         return;
       }
 
@@ -683,6 +685,7 @@ function createMatchCard(cropCanvas, detection, index) {
       renderGameDetails(details, matches);
       this.applyFilters();
       updateFeedbackActions(this);
+      refreshSelectedMatchCard(this);
     },
     setCorrectedGame(game) {
       const correctedMatch = {
@@ -703,6 +706,7 @@ function createMatchCard(cropCanvas, detection, index) {
       card.dataset.score = "1";
       renderGameDetails(details, this.matches);
       this.applyFilters();
+      refreshSelectedMatchCard(this);
     },
     setError(text, options = {}) {
       this.matches = [];
@@ -720,6 +724,7 @@ function createMatchCard(cropCanvas, detection, index) {
       card.dataset.score = "-1";
       card.dataset.fit = "0";
       updateFeedbackActions(this);
+      refreshSelectedMatchCard(this);
     },
     applyFilters() {
       const result = evaluateCardAgainstFilters(this);
@@ -733,11 +738,32 @@ function createMatchCard(cropCanvas, detection, index) {
     },
   };
 
+  card.addEventListener("click", (event) => {
+    if (isMatchSelectionInteractiveTarget(event.target)) {
+      return;
+    }
+
+    selectMatchCard(cardApi);
+  });
+  card.addEventListener("keydown", (event) => {
+    if (
+      (event.key !== "Enter" && event.key !== " ")
+      || isMatchSelectionInteractiveTarget(event.target)
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    selectMatchCard(cardApi);
+  });
   confirmButton.addEventListener("click", () => submitRecognitionFeedback(cardApi, "confirm"));
   denyButton.addEventListener("click", () => submitRecognitionFeedback(cardApi, "deny"));
   dismissButton.addEventListener("click", () => dismissMatchCard(cardApi, 1));
   enableCropHoverPreview(cropCanvas);
-  cropCanvas.addEventListener("click", () => openCropViewer(cropCanvas, name.textContent));
+  cropCanvas.addEventListener("click", () => {
+    selectMatchCard(cardApi);
+    openCropViewer(cropCanvas, name.textContent);
+  });
   correctionPanel.addEventListener("submit", (event) => submitCorrectedReference(event, cardApi));
   correctionInput.addEventListener("input", () => updateCorrectionSuggestions(cardApi));
   correctionInput.addEventListener("keydown", (event) => handleCorrectionInputKeyDown(event, cardApi));
@@ -817,6 +843,43 @@ function isSwipeDismissInteractiveTarget(target) {
   return target.closest?.("button, input, select, textarea, a, label, .correctionPanel, .matchCropCanvas");
 }
 
+function isMatchSelectionInteractiveTarget(target) {
+  return target.closest?.("button, input, select, textarea, a, label, .correctionPanel, .matchCropCanvas");
+}
+
+function selectMatchCard(cardApi) {
+  if (!cardApi || cardApi.dismissed) {
+    return;
+  }
+
+  if (selectedMatchCard && selectedMatchCard !== cardApi) {
+    selectedMatchCard.card.classList.remove("isSelected");
+  }
+
+  selectedMatchCard = cardApi;
+  cardApi.card.classList.add("isSelected");
+  redrawActiveDetections();
+
+  const best = cardApi.matches[0];
+  setStatus(best
+    ? `${best.name} highlighted in the photo.`
+    : "Selected box highlighted in the photo.");
+}
+
+function clearSelectedMatchCard() {
+  if (selectedMatchCard) {
+    selectedMatchCard.card.classList.remove("isSelected");
+  }
+
+  selectedMatchCard = null;
+}
+
+function refreshSelectedMatchCard(cardApi) {
+  if (selectedMatchCard === cardApi) {
+    redrawActiveDetections();
+  }
+}
+
 function finishSwipeDismiss(cardApi, gesture, event, allowDismiss) {
   if (!gesture || gesture.pointerId !== event.pointerId) {
     return;
@@ -886,6 +949,11 @@ function dismissMatchCard(cardApi, direction) {
   cardApi.dismissed = true;
   hideCorrectionPrompt(cardApi);
   currentResultCards = currentResultCards.filter((candidate) => candidate !== cardApi);
+
+  if (selectedMatchCard === cardApi) {
+    clearSelectedMatchCard();
+    redrawActiveDetections();
+  }
 
   card.style.setProperty("--dismiss-x", `${dismissX}px`);
   card.classList.remove("isSwiping", "isDismissReady");
@@ -1470,11 +1538,17 @@ function scoreGameCandidate(query, queryTokens, game) {
 
   const fullPhraseScore = scorePhraseMatch(query, name);
   const tokenScore = scoreTokenMatch(queryTokens, game.searchTokens);
+  const tokenCoverage = scoreQueryTokenCoverage(queryTokens, game.searchTokens);
   const lengthRatio = Math.min(query.length, name.length) / Math.max(query.length, name.length);
   const phraseWeight = fullPhraseScore >= 0.9 ? 0.58 : 0.38;
   const tokenWeight = fullPhraseScore >= 0.9 ? 0.32 : 0.52;
   const coverageBoost = Math.min(queryTokens.length, game.searchTokens.length) >= 2 ? 0.08 : 0;
   const variantBoost = queryTokens.length > 1 && allQueryTokensAppear(queryTokens, game.searchTokens) ? 0.14 : 0;
+  const completeTokenBoost = queryTokens.length > 1 && tokenCoverage >= 1 ? 0.18 : 0;
+  const conciseTitleBoost = queryTokens.length > 1 && tokenCoverage >= 1
+    ? Math.max(0, 0.06 - Math.max(0, game.searchTokens.length - queryTokens.length) * 0.02)
+    : 0;
+  const missingTokenPenalty = queryTokens.length > 1 ? (1 - tokenCoverage) * 0.22 : 0;
   const shortPenalty = getShortMatchPenalty(queryTokens, game.searchTokens, tokenScore, fullPhraseScore);
   const expansionPenalty = game.is_expansion && !query.includes("expansion") ? 0.015 : 0;
   const rankBoost = game.rank ? Math.max(0, 0.04 - Math.log10(game.rank + 1) * 0.007) : 0;
@@ -1483,11 +1557,14 @@ function scoreGameCandidate(query, queryTokens, game) {
     + lengthRatio * 0.08
     + coverageBoost
     + variantBoost
+    + completeTokenBoost
+    + conciseTitleBoost
     + rankBoost
+    - missingTokenPenalty
     - shortPenalty
     - expansionPenalty;
 
-  return Math.max(0, score);
+  return Math.min(1.29, Math.max(0, score));
 }
 
 function scorePhraseMatch(query, name) {
@@ -1534,7 +1611,31 @@ function scoreTokenMatch(queryTokens, candidateTokens) {
 }
 
 function allQueryTokensAppear(queryTokens, candidateTokens) {
-  return queryTokens.every((token) => bestTokenSimilarity(token, candidateTokens) >= 0.9);
+  return queryTokens.every((token) => bestTokenSimilarity(token, candidateTokens) >= tokenCoverageThreshold(token));
+}
+
+function scoreQueryTokenCoverage(queryTokens, candidateTokens) {
+  if (!queryTokens.length) {
+    return 0;
+  }
+
+  const matched = queryTokens.filter((token) => (
+    bestTokenSimilarity(token, candidateTokens) >= tokenCoverageThreshold(token)
+  )).length;
+
+  return matched / queryTokens.length;
+}
+
+function tokenCoverageThreshold(token) {
+  if (token.length <= 1) {
+    return 0.64;
+  }
+
+  if (token.length <= 2) {
+    return 0.76;
+  }
+
+  return 0.86;
 }
 
 function getShortMatchPenalty(queryTokens, candidateTokens, tokenScore, phraseScore) {
@@ -1575,8 +1676,16 @@ function tokenSimilarity(left, right) {
     return 1;
   }
 
-  if (right.startsWith(left) && left.length >= 3) {
-    return left.length >= 5 ? 0.95 : 0.88;
+  if (right.startsWith(left) && left.length >= 1) {
+    if (left.length >= 5) {
+      return 0.95;
+    }
+
+    if (left.length >= 3) {
+      return 0.88;
+    }
+
+    return left.length === 2 ? 0.78 : 0.64;
   }
 
   if (left.startsWith(right) && right.length >= 4) {
@@ -2849,7 +2958,28 @@ function matchSortScore(match) {
   return cleanNumber(match?.rank_score ?? match?.score);
 }
 
-function drawDetections(detections, sourceCanvas, displayElement) {
+function redrawActiveDetections() {
+  if (!activeSourceCanvas?.lastDetections || !activeDisplayElement) {
+    return;
+  }
+
+  if (
+    selectedMatchCard
+    && (selectedMatchCard.dismissed || !currentResultCards.includes(selectedMatchCard))
+  ) {
+    clearSelectedMatchCard();
+  }
+
+  drawDetections(
+    activeSourceCanvas.lastDetections,
+    activeSourceCanvas,
+    activeDisplayElement,
+    selectedMatchCard?.detection || null,
+    selectedMatchCard?.matches?.[0]?.name || ""
+  );
+}
+
+function drawDetections(detections, sourceCanvas, displayElement, selectedDetection = null, selectedLabel = "") {
   const displayRect = displayElement.getBoundingClientRect();
   const displayWidth = displayRect.width;
   const displayHeight = displayRect.height;
@@ -2891,21 +3021,41 @@ function drawDetections(detections, sourceCanvas, displayElement) {
   ctx.textBaseline = "middle";
 
   for (const detection of detections) {
+    const selected = detection === selectedDetection;
+    const dimUnselected = selectedDetection && !selected;
     const x = detection.x * scale + offsetX;
     const y = detection.y * scale + offsetY;
     const width = detection.width * scale;
     const height = detection.height * scale;
-    const label = `${detection.score.toFixed(2)}`;
+    const rawLabel = selected && selectedLabel
+      ? `${selectedLabel} ${detection.score.toFixed(2)}`
+      : `${detection.score.toFixed(2)}`;
     const boxGradient = ctx.createLinearGradient(x, y, x + width, y + height);
+    const boxLineWidth = selected ? 5 : 3;
 
     boxGradient.addColorStop(0, boxStart);
     boxGradient.addColorStop(1, boxEnd);
 
+    ctx.save();
+    ctx.globalAlpha = dimUnselected ? 0.35 : 1;
+
+    if (selected) {
+      ctx.fillStyle = resolvedTheme === "light"
+        ? "rgba(62, 99, 255, 0.13)"
+        : "rgba(113, 139, 255, 0.16)";
+      ctx.fillRect(x, y, width, height);
+      ctx.shadowColor = boxEnd;
+      ctx.shadowBlur = 18;
+    }
+
     ctx.strokeStyle = boxGradient;
+    ctx.lineWidth = boxLineWidth;
     ctx.strokeRect(x, y, width, height);
+    ctx.shadowBlur = 0;
 
     const labelPaddingX = 7;
     const labelHeight = 22;
+    const label = fitOverlayLabel(ctx, rawLabel, Math.max(24, displayWidth - labelPaddingX * 2));
     const labelWidth = Math.ceil(ctx.measureText(label).width) + labelPaddingX * 2;
     const maxLabelX = Math.max(0, displayWidth - labelWidth);
     const maxLabelY = Math.max(0, displayHeight - labelHeight);
@@ -2924,10 +3074,26 @@ function drawDetections(detections, sourceCanvas, displayElement) {
     ctx.strokeStyle = labelBorder;
     ctx.lineWidth = 1;
     ctx.stroke();
-    ctx.lineWidth = 3;
+    ctx.lineWidth = boxLineWidth;
     ctx.fillStyle = labelText;
     ctx.fillText(label, labelX + labelPaddingX, labelY + labelHeight / 2);
+    ctx.restore();
   }
+}
+
+function fitOverlayLabel(ctx, label, maxWidth) {
+  if (ctx.measureText(label).width <= maxWidth) {
+    return label;
+  }
+
+  const ellipsis = "...";
+  let fitted = label;
+
+  while (fitted.length > 4 && ctx.measureText(`${fitted}${ellipsis}`).width > maxWidth) {
+    fitted = fitted.slice(0, -1);
+  }
+
+  return `${fitted.trim()}${ellipsis}`;
 }
 
 function cssValue(styles, name, fallback) {
@@ -2978,6 +3144,7 @@ function clearResults(cancelActiveScan = true) {
   }
   hideCropZoomPreview();
   closeCropViewer();
+  clearSelectedMatchCard();
   currentResultCards = [];
   resultsGrid.replaceChildren();
   resultsPanel.hidden = true;

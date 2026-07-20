@@ -864,14 +864,23 @@ body.cameraLive #scanButton {
     transform 180ms ease,
     opacity 180ms ease,
     border-color 180ms ease,
+    box-shadow 180ms ease,
     background 180ms ease;
   user-select: none;
   will-change: transform, opacity;
+  cursor: pointer;
 }
 
 .matchCard.recommended {
   border-color: color-mix(in srgb, var(--success) 62%, transparent);
   background: linear-gradient(145deg, color-mix(in srgb, var(--success) 18%, transparent), color-mix(in srgb, var(--purple) 10%, transparent));
+}
+
+.matchCard.isSelected {
+  border-color: color-mix(in srgb, var(--blue) 55%, var(--violet));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--violet) 30%, transparent),
+    0 16px 38px color-mix(in srgb, var(--blue) 22%, transparent);
 }
 
 .matchCard.rejected {
