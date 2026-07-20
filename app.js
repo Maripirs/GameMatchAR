@@ -1966,7 +1966,17 @@ function selectContributorTab(tab, { load = true } = {}) {
 
   if (contributorActiveTab === "latest" && load) {
     loadContributorReview();
+    scrollContributorReviewIntoView();
   }
+}
+
+function scrollContributorReviewIntoView() {
+  window.setTimeout(() => {
+    contributorReviewPanel?.scrollIntoView({
+      block: "start",
+      behavior: "smooth",
+    });
+  }, 60);
 }
 
 async function loadContributorReview({ force = false } = {}) {
