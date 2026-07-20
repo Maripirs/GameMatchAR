@@ -508,6 +508,8 @@ body.contributorMode #infoButton {
   border-radius: 8px;
   background: var(--card-gradient);
   transition:
+    opacity 180ms ease,
+    transform 180ms ease,
     border-color 180ms ease,
     background 180ms ease;
 }
@@ -522,12 +524,19 @@ body.contributorMode #infoButton {
   background: linear-gradient(145deg, color-mix(in srgb, var(--danger) 14%, transparent), color-mix(in srgb, var(--purple) 8%, transparent));
 }
 
+.contributorReviewCard.isDismissing {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.98);
+}
+
 .contributorReviewImage {
   display: block;
   width: 98px;
   height: 98px;
   border-radius: 6px;
   background: var(--app-bg);
+  cursor: zoom-in;
   object-fit: contain;
 }
 

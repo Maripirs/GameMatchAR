@@ -919,17 +919,19 @@ function dismissMatchCard(cardApi, direction) {
   window.setTimeout(removeCard, 260);
 }
 
-function enableCropHoverPreview(cropCanvas) {
-  cropCanvas.addEventListener("pointerenter", (event) => {
-    showCropZoomPreview(cropCanvas, event);
+function enableCropHoverPreview(source) {
+  source.addEventListener("pointerenter", (event) => {
+    showCropZoomPreview(source, event);
   });
-  cropCanvas.addEventListener("pointermove", positionCropZoomPreview);
-  cropCanvas.addEventListener("pointerleave", hideCropZoomPreview);
-  cropCanvas.addEventListener("pointercancel", hideCropZoomPreview);
+  source.addEventListener("pointermove", positionCropZoomPreview);
+  source.addEventListener("pointerleave", hideCropZoomPreview);
+  source.addEventListener("pointercancel", hideCropZoomPreview);
 }
 
-function showCropZoomPreview(sourceCanvas, event) {
-  if (!cropHoverPreviewQuery?.matches || !sourceCanvas.width || !sourceCanvas.height) {
+function showCropZoomPreview(source, event) {
+  const sourceSize = drawableSourceSize(source);
+
+  if (!cropHoverPreviewQuery?.matches || !sourceSize.width || !sourceSize.height) {
     return;
   }
 
@@ -939,13 +941,13 @@ function showCropZoomPreview(sourceCanvas, event) {
     window.innerWidth - 32,
     window.innerHeight - 32
   );
-  const sourceMaxSide = Math.max(sourceCanvas.width, sourceCanvas.height);
+  const sourceMaxSide = Math.max(sourceSize.width, sourceSize.height);
   const scale = Math.min(
     maxSide / sourceMaxSide,
     Math.max(CROP_ZOOM_MIN_SIDE / sourceMaxSide, 1)
   );
-  const width = Math.max(1, Math.round(sourceCanvas.width * scale));
-  const height = Math.max(1, Math.round(sourceCanvas.height * scale));
+  const width = Math.max(1, Math.round(sourceSize.width * scale));
+  const height = Math.max(1, Math.round(sourceSize.height * scale));
   const context = preview.getContext("2d");
 
   preview.width = width;
@@ -955,7 +957,7 @@ function showCropZoomPreview(sourceCanvas, event) {
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
   context.clearRect(0, 0, width, height);
-  context.drawImage(sourceCanvas, 0, 0, width, height);
+  context.drawImage(source, 0, 0, width, height);
   preview.hidden = false;
   positionCropZoomPreview(event);
 }
@@ -1000,8 +1002,10 @@ function hideCropZoomPreview() {
   }
 }
 
-function openCropViewer(sourceCanvas, titleText = "Crop") {
-  if (!sourceCanvas.width || !sourceCanvas.height) {
+function openCropViewer(source, titleText = "Crop") {
+  const sourceSize = drawableSourceSize(source);
+
+  if (!sourceSize.width || !sourceSize.height) {
     return;
   }
 
@@ -1012,20 +1016,20 @@ function openCropViewer(sourceCanvas, titleText = "Crop") {
   const context = canvas.getContext("2d");
 
   title.textContent = titleText || "Crop";
-  canvas.width = sourceCanvas.width;
-  canvas.height = sourceCanvas.height;
+  canvas.width = sourceSize.width;
+  canvas.height = sourceSize.height;
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(sourceCanvas, 0, 0);
+  context.drawImage(source, 0, 0);
   overlay.hidden = false;
   document.body.classList.add("cropViewerOpen");
 
-  const fitZoom = calculateCropViewerFitZoom(sourceCanvas, scroller);
-  const coverZoom = calculateCropViewerCoverZoom(sourceCanvas, scroller);
+  const fitZoom = calculateCropViewerFitZoom(sourceSize, scroller);
+  const coverZoom = calculateCropViewerCoverZoom(sourceSize, scroller);
   const initialZoom = coverZoom;
 
   cropViewerState = {
-    sourceWidth: sourceCanvas.width,
-    sourceHeight: sourceCanvas.height,
+    sourceWidth: sourceSize.width,
+    sourceHeight: sourceSize.height,
     fitZoom,
     coverZoom,
     zoom: initialZoom,
@@ -1034,6 +1038,13 @@ function openCropViewer(sourceCanvas, titleText = "Crop") {
 
   setCropViewerZoom(initialZoom, { preserveCenter: false });
   window.requestAnimationFrame(centerCropViewer);
+}
+
+function drawableSourceSize(source) {
+  return {
+    width: source?.naturalWidth || source?.videoWidth || source?.width || 0,
+    height: source?.naturalHeight || source?.videoHeight || source?.height || 0,
+  };
 }
 
 function getCropViewer() {
@@ -2090,6 +2101,8 @@ function createContributorReviewCard(reference) {
   status.textContent = "Waiting for review";
 
   loadContributorReferenceImage(reference, image);
+  enableCropHoverPreview(image);
+  image.addEventListener("click", () => openCropViewer(image, reference.name));
   confirmButton.addEventListener("click", () => submitContributorReferenceReview(reference, "confirm", {
     card,
     confirmButton,
@@ -2181,12 +2194,40 @@ async function submitContributorReferenceReview(reference, action, controls) {
     card.classList.toggle("reviewDenied", action === "deny");
     status.textContent = action === "confirm" ? "Marked right" : "Marked wrong";
     setStatus(`${reference.name} review saved.`);
+    dismissContributorReviewCard(card);
   } catch (error) {
     console.error(error);
     status.textContent = error.message || "Could not save review.";
     confirmButton.disabled = false;
     denyButton.disabled = false;
   }
+}
+
+function dismissContributorReviewCard(card) {
+  if (card.classList.contains("isDismissing")) {
+    return;
+  }
+
+  hideCropZoomPreview();
+  card.classList.add("isDismissing");
+  window.setTimeout(() => {
+    card.remove();
+    updateContributorReviewCountAfterRemoval();
+  }, 190);
+}
+
+function updateContributorReviewCountAfterRemoval() {
+  const remaining = contributorReviewGrid.querySelectorAll(".contributorReviewCard:not(.isDismissing)").length;
+  const totalMatch = contributorReviewCount.textContent.match(/\/(\d+)/);
+
+  if (remaining) {
+    contributorReviewCount.textContent = totalMatch ? `${remaining}/${totalMatch[1]}` : String(remaining);
+    contributorReviewStatus.textContent = "Review recent contributor references.";
+    return;
+  }
+
+  contributorReviewCount.textContent = "";
+  contributorReviewStatus.textContent = "All visible references reviewed.";
 }
 
 function clearContributorReview() {
