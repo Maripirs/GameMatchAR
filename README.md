@@ -39,8 +39,28 @@ Required files:
 - `data/`
 - `models/`
 - `.nojekyll`
+- `CNAME`
 
 The app must be served over HTTPS for phone camera access. GitHub Pages does this automatically.
+
+This build is configured for:
+
+- Frontend: `https://gamematch.maripi.net`
+- Backend API: `https://api.gamematch.maripi.net`
+
+In GitHub, set **Settings -> Pages -> Custom domain** to:
+
+```text
+gamematch.maripi.net
+```
+
+In DNS, point:
+
+```text
+gamematch.maripi.net CNAME YOUR_GITHUB_USERNAME.github.io
+```
+
+Point `api.gamematch.maripi.net` to the FastAPI backend with Cloudflare Tunnel, Tailscale Funnel, a VPS proxy, or another HTTPS host.
 
 ## Match Feedback
 
