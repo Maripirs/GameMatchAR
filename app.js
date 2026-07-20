@@ -638,6 +638,7 @@ function createMatchCard(cropCanvas, detection, index) {
     isConfident: false,
     fitsFilters: false,
     feedbackSent: false,
+    userConfirmed: false,
     matchFailed: false,
     dismissed: false,
     feedbackControls: {
@@ -664,6 +665,7 @@ function createMatchCard(cropCanvas, detection, index) {
       this.isConfident = isConfidentMatch(matches);
       this.details = best ? gameDetailsById.get(Number(best.id)) || null : null;
       this.feedbackSent = false;
+      this.userConfirmed = false;
       this.matchFailed = false;
       card.classList.remove("feedbackConfirmed", "feedbackDenied");
 
@@ -682,7 +684,7 @@ function createMatchCard(cropCanvas, detection, index) {
       meta.textContent = `BGG ${best.id} · ${formatMatchSource(best)}`;
       score.textContent = formatMatchScoreText(best);
       card.dataset.score = String(matchSortScore(best));
-      renderGameDetails(details, matches);
+      renderGameDetails(details, matches, { force: this.isConfident });
       this.applyFilters();
       updateFeedbackActions(this);
       refreshSelectedMatchCard(this);
@@ -699,12 +701,27 @@ function createMatchCard(cropCanvas, detection, index) {
 
       this.matches = [correctedMatch];
       this.isConfident = true;
+      this.userConfirmed = true;
       this.details = gameDetailsById.get(Number(game.id)) || null;
       name.textContent = game.name;
       meta.textContent = `BGG ${game.id} · corrected`;
       score.textContent = "Saved as correct";
       card.dataset.score = "1";
-      renderGameDetails(details, this.matches);
+      renderGameDetails(details, this.matches, { force: true });
+      this.applyFilters();
+      refreshSelectedMatchCard(this);
+    },
+    confirmMatch() {
+      const best = this.matches[0];
+
+      if (!best) {
+        return;
+      }
+
+      this.userConfirmed = true;
+      this.isConfident = true;
+      this.details = gameDetailsById.get(Number(best.id)) || null;
+      renderGameDetails(details, this.matches, { force: true });
       this.applyFilters();
       refreshSelectedMatchCard(this);
     },
@@ -714,6 +731,7 @@ function createMatchCard(cropCanvas, detection, index) {
       this.isConfident = false;
       this.fitsFilters = false;
       this.matchFailed = true;
+      this.userConfirmed = false;
       name.textContent = text;
       meta.textContent = options.meta || "Backend matcher unavailable";
       score.textContent = "";
@@ -2459,7 +2477,8 @@ async function submitRecognitionFeedback(card, action) {
     card.card.classList.toggle("feedbackDenied", action === "deny");
 
     if (action === "confirm") {
-      card.applyFilters();
+      card.confirmMatch();
+      refreshResultCards();
       feedbackStatus.textContent = acceptedFeedbackText(card);
       setStatus(`${best.name} confirmed.`);
     } else if (contributorMode) {
@@ -2549,6 +2568,7 @@ async function submitCorrectedReference(event, card) {
     card.card.classList.add("feedbackConfirmed");
     card.card.classList.remove("feedbackDenied");
     card.setCorrectedGame(game);
+    refreshResultCards();
     hideCorrectionPrompt(card, { clear: false });
     feedbackStatus.textContent = "Corrected";
     setStatus(`${game.name} saved as the correct reference.`);
@@ -2656,6 +2676,10 @@ function handleFilterChange() {
     card.applyFilters();
   }
 
+  refreshResultCards();
+}
+
+function refreshResultCards() {
   updateResultStats();
   sortCards();
 }
@@ -2795,10 +2819,10 @@ function supportsComplexity(details, maxWeight) {
   return weight <= maxWeight;
 }
 
-function renderGameDetails(container, matches) {
+function renderGameDetails(container, matches, { force = false } = {}) {
   container.replaceChildren();
 
-  if (!isConfidentMatch(matches)) {
+  if (!force && !isConfidentMatch(matches)) {
     container.textContent = "Game details hidden until the match is stronger.";
     container.classList.add("muted");
     return;
