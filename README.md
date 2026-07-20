@@ -46,7 +46,7 @@ The app must be served over HTTPS for phone camera access. GitHub Pages does thi
 This build is configured for:
 
 - Frontend: `https://gamematch.maripi.net`
-- Backend API: `https://api.gamematch.maripi.net`
+- Backend API: `https://api.maripi.net`
 
 In GitHub, set **Settings -> Pages -> Custom domain** to:
 
@@ -60,7 +60,7 @@ In DNS, point:
 gamematch.maripi.net CNAME YOUR_GITHUB_USERNAME.github.io
 ```
 
-Point `api.gamematch.maripi.net` to the FastAPI backend with Cloudflare Tunnel, Tailscale Funnel, a VPS proxy, or another HTTPS host.
+Point `api.maripi.net` to the FastAPI backend with Cloudflare Tunnel, Tailscale Funnel, a VPS proxy, or another HTTPS host.
 
 ## Match Feedback
 
