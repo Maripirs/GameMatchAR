@@ -48,6 +48,7 @@ const filterSummary = document.getElementById("filterSummary");
 const resultsPanel = document.getElementById("resultsPanel");
 const resultsGrid = document.getElementById("resultsGrid");
 const resultCount = document.getElementById("resultCount");
+const resultsNotice = document.getElementById("resultsNotice");
 const infoButton = document.getElementById("infoButton");
 const infoPanel = document.getElementById("infoPanel");
 const infoCloseButton = document.getElementById("infoCloseButton");
@@ -320,17 +321,23 @@ async function processImageCanvas(sourceCanvas, displayElement) {
       await ensureBackendMatcherReady({ force: true });
     } catch (error) {
       console.warn("Backend matcher unavailable:", error);
+      setResultsNotice(backendOfflineMessage(), "warning");
 
       for (const card of cards) {
-        card.setError("Matcher offline");
+        card.setError("Server offline", {
+          meta: `Matcher not reachable at ${backendDisplayName()}`,
+          fitText: "Detected box",
+          detailsText: "Game names and filters will work after the matching server is online.",
+        });
       }
 
       updateResultStats();
       sortCards();
-      setStatus("Backend matcher unavailable.");
+      setStatus("Matching server offline. Boxes were detected.");
       return;
     }
 
+    setResultsNotice("");
     setStatus(`Matching ${confident.length} box${confident.length === 1 ? "" : "es"}...`);
 
     await processWithConcurrency(cards, MATCH_CONCURRENCY, async (card, index) => {
@@ -370,7 +377,11 @@ async function processImageCanvas(sourceCanvas, displayElement) {
 
         matchFailures += 1;
         console.warn(`Crop ${index + 1} match failed:`, error);
-        card.setError("Match failed");
+        card.setError("Match failed", {
+          meta: "Server did not return a match",
+          fitText: "Try again",
+          detailsText: "This crop could not be matched, but the other crops can continue.",
+        });
       }
 
       updateResultStats();
@@ -519,7 +530,7 @@ async function preloadStartupModels() {
   if (startupStatusActive) {
     setStatus(backendResult.ok
       ? "Ready."
-      : "Ready. Backend not reached yet; scan will retry.");
+      : "Ready. Matching server offline; boxes can still be detected.");
   }
 }
 
@@ -676,18 +687,19 @@ function createMatchCard(cropCanvas, detection, index) {
       renderGameDetails(details, this.matches);
       this.applyFilters();
     },
-    setError(text) {
+    setError(text, options = {}) {
       this.matches = [];
       this.details = null;
       this.isConfident = false;
       this.fitsFilters = false;
       this.matchFailed = true;
       name.textContent = text;
-      meta.textContent = "Backend matcher unavailable";
+      meta.textContent = options.meta || "Backend matcher unavailable";
       score.textContent = "";
       fit.className = "filterFit unknown";
-      fit.textContent = "Try again";
-      details.replaceChildren();
+      fit.textContent = options.fitText || "Try again";
+      details.className = "gameDetails muted";
+      details.textContent = options.detailsText || "Start the backend and scan again.";
       card.dataset.score = "-1";
       card.dataset.fit = "0";
       updateFeedbackActions(this);
@@ -1924,7 +1936,9 @@ function updateFeedbackActions(card) {
     return;
   }
 
-  if (waiting) {
+  if (card.matchFailed) {
+    feedbackStatus.textContent = "No match available";
+  } else if (waiting) {
     feedbackStatus.textContent = "Waiting for match";
   } else if (contributorMode) {
     feedbackStatus.textContent = "Confirm or deny";
@@ -2551,6 +2565,7 @@ function cssValue(styles, name, fallback) {
 function showResultShell(count) {
   resultsPanel.hidden = false;
   resultCount.textContent = `${count}`;
+  setResultsNotice("");
 }
 
 function sortCards() {
@@ -2595,9 +2610,40 @@ function clearResults(cancelActiveScan = true) {
   resultsGrid.replaceChildren();
   resultsPanel.hidden = true;
   resultCount.textContent = "";
+  setResultsNotice("");
 
   const ctx = boxesCanvas.getContext("2d");
   ctx.clearRect(0, 0, boxesCanvas.width, boxesCanvas.height);
+}
+
+function setResultsNotice(text, tone = "info") {
+  if (!resultsNotice) {
+    return;
+  }
+
+  resultsNotice.hidden = !text;
+  resultsNotice.textContent = text || "";
+  resultsNotice.dataset.tone = tone;
+}
+
+function backendDisplayName() {
+  const base = configuredApiBase();
+
+  if (!base) {
+    return "the local backend";
+  }
+
+  try {
+    return new URL(base).host;
+  } catch {
+    return base.replace(/^https?:\/\//, "");
+  }
+}
+
+function backendOfflineMessage() {
+  const target = backendDisplayName();
+
+  return `Matching server offline. Start ${target} and scan again to identify games.`;
 }
 
 function setControlsEnabled(enabled) {
