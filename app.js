@@ -44,6 +44,8 @@ const backToCameraButton = document.getElementById("backToCameraButton");
 const switchCameraButton = document.getElementById("switchCameraButton");
 const uploadButton = document.getElementById("uploadButton");
 const imageUpload = document.getElementById("imageUpload");
+const examplePanel = document.getElementById("examplePanel");
+const exampleButtons = Array.from(document.querySelectorAll("[data-example-src]"));
 const playersFilter = document.getElementById("playersFilter");
 const timeFilter = document.getElementById("timeFilter");
 const complexityFilter = document.getElementById("complexityFilter");
@@ -120,6 +122,9 @@ backToCameraButton.addEventListener("click", backToLiveCamera);
 switchCameraButton.addEventListener("click", switchCameraFromTap);
 uploadButton.addEventListener("click", () => imageUpload.click());
 imageUpload.addEventListener("change", handleImageUpload);
+for (const button of exampleButtons) {
+  button.addEventListener("click", () => scanExampleImage(button));
+}
 infoButton.addEventListener("click", () => setInfoPanelOpen(true));
 infoCloseButton.addEventListener("click", () => setInfoPanelOpen(false));
 infoPanel.addEventListener("click", handleInfoPanelBackdropClick);
@@ -293,6 +298,34 @@ async function handleImageUpload() {
   } catch (error) {
     console.error("Could not read uploaded image:", uploadFileDebugInfo(file), error);
     setStatus(uploadImageErrorText(file, error));
+  }
+
+  setControlsEnabled(true);
+}
+
+async function scanExampleImage(button) {
+  startupStatusActive = false;
+
+  const src = button.dataset.exampleSrc;
+  const label = button.dataset.exampleLabel || "example";
+
+  if (!src) {
+    return;
+  }
+
+  clearResults();
+  setControlsEnabled(false);
+  setStatus(`Loading ${label}...`);
+
+  try {
+    await drawImageUrlToCanvas(src, photoPreview);
+    activeSourceCanvas = photoPreview;
+    activeDisplayElement = photoPreview;
+    showPhotoPreview();
+    await processImageCanvas(photoPreview, photoPreview);
+  } catch (error) {
+    console.error(`Could not load example image ${src}:`, error);
+    setStatus("Could not load that example image.");
   }
 
   setControlsEnabled(true);
@@ -3396,12 +3429,14 @@ function backendOfflineMessage() {
 function setControlsEnabled(enabled) {
   const frozenFrame = isCameraFrameFrozen();
   const liveCamera = cameraReady && !frozenFrame;
+  const imagePreviewActive = activeDisplayElement === photoPreview && !photoPreview.hidden;
 
   document.body.classList.toggle("cameraLive", liveCamera);
   document.body.classList.toggle("cameraFrozen", frozenFrame);
 
   startCameraButton.hidden = cameraReady;
   uploadButton.hidden = cameraReady;
+  examplePanel.hidden = cameraReady || imagePreviewActive;
   scanButton.hidden = !cameraReady || frozenFrame;
   backToCameraButton.hidden = !frozenFrame;
   switchCameraButton.hidden = !cameraReady || frozenFrame;
@@ -3409,6 +3444,9 @@ function setControlsEnabled(enabled) {
   startCameraButton.disabled = !enabled || cameraReady;
   uploadButton.disabled = !enabled || cameraReady;
   imageUpload.disabled = !enabled || cameraReady;
+  for (const button of exampleButtons) {
+    button.disabled = !enabled || cameraReady || imagePreviewActive;
+  }
   scanButton.disabled = !enabled || !cameraReady || frozenFrame;
   backToCameraButton.disabled = !enabled || !frozenFrame;
   switchCameraButton.disabled = !enabled || !cameraReady || frozenFrame;
@@ -3496,6 +3534,22 @@ async function drawImageElementToCanvas(file, canvas) {
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+async function drawImageUrlToCanvas(src, canvas) {
+  const image = new Image();
+  const loadPromise = image.decode ? null : waitForImageLoad(image);
+
+  image.decoding = "async";
+  image.src = src;
+
+  if (image.decode) {
+    await image.decode();
+  } else {
+    await loadPromise;
+  }
+
+  drawImageSourceToCanvas(image, canvas);
 }
 
 function waitForImageLoad(image) {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#080b0d" />
   <title>GameMatch AR</title>
-  <link rel="stylesheet" href="style.css?v=20260721-obscure1" />
+  <link rel="stylesheet" href="style.css?v=20260721-examples1" />
 </head>
 <body>
   <main id="stage" aria-label="GameMatch AR">
@@ -126,6 +126,20 @@
       <input id="imageUpload" type="file" accept="image/*,.heic,.heif" />
     </section>
 
+    <section id="examplePanel" aria-label="Example scans">
+      <strong>Examples</strong>
+      <div id="exampleGrid">
+        <button class="exampleButton" type="button" data-example-src="examples/game-bag.jpg" data-example-label="Bag Stack">
+          <img src="examples/game-bag.jpg" alt="Board games stacked inside a travel bag" loading="lazy" />
+          <span>Bag Stack</span>
+        </button>
+        <button class="exampleButton" type="button" data-example-src="examples/game-shelf.jpg" data-example-label="Shelf Spines">
+          <img src="examples/game-shelf.jpg" alt="Board game spines on a shelf" loading="lazy" />
+          <span>Shelf Spines</span>
+        </button>
+      </div>
+    </section>
+
     <section id="resultsPanel" hidden>
       <div id="resultsHeader">
         <strong>Matches</strong>
@@ -146,6 +160,6 @@
           : "";
     }
   </script>
-  <script type="module" src="app.js?v=20260721-obscure1"></script>
+  <script type="module" src="app.js?v=20260721-examples1"></script>
 </body>
 </html>
