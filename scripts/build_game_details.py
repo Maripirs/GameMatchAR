@@ -21,6 +21,7 @@ DEFAULT_USER_AGENT = (
 )
 DEFAULT_GAME_LIMIT = 5000
 DEFAULT_MIN_USERS_RATED = 50
+EXCLUDED_GAME_IDS = {"521"}
 CSV_SUBDOMAIN_RANK_FIELDS = {
     "abstracts_rank": "abstract",
     "cgs_rank": "customizable",
@@ -47,6 +48,7 @@ def main():
     visual_index_path = resolve_path(project_root, args.visual_index)
     csv_path = resolve_optional_path(project_root, args.csv)
     output_path = resolve_path(project_root, args.output)
+    exclude_details_path = resolve_optional_path(project_root, args.exclude_details) if args.exclude_details else None
 
     seeds = collect_game_seeds(
         ids_from=args.ids_from,
@@ -58,6 +60,13 @@ def main():
     if args.limit:
         seeds = seeds[: args.limit]
 
+    exclude_ids = load_detail_ids(exclude_details_path) if exclude_details_path else set()
+
+    if exclude_ids:
+        before_count = len(seeds)
+        seeds = [seed for seed in seeds if str(seed["id"]) not in exclude_ids]
+        print(f"Excluded {before_count - len(seeds)} games from {exclude_details_path}")
+
     existing = load_existing(output_path)
 
     if args.skip_bgg:
@@ -65,7 +74,7 @@ def main():
             str(seed["id"]): merge_existing_with_seed(existing.get(str(seed["id"])), seed)
             for seed in seeds
         }
-        preserve_existing_details(details_by_id, existing, refresh=args.refresh)
+        preserve_existing_details(details_by_id, existing, refresh=args.refresh, exclude_ids=exclude_ids)
         print(f"Source games: {len(seeds)}")
         print("Using BGG API: no (--skip-bgg)")
         print(f"Output: {output_path}")
@@ -82,7 +91,7 @@ def main():
             for seed in seeds
             if str(seed["id"]) in existing
         }
-        preserve_existing_details(details_by_id, existing, refresh=args.refresh)
+        preserve_existing_details(details_by_id, existing, refresh=args.refresh, exclude_ids=exclude_ids)
         pending = [seed for seed in seeds if str(seed["id"]) not in details_by_id]
 
     print(f"Source games: {len(seeds)}")
@@ -182,6 +191,12 @@ def parse_args():
         default=Path("data/game_details.json"),
         help="Output JSON path.",
     )
+    parser.add_argument(
+        "--exclude-details",
+        type=Path,
+        default=None,
+        help="Optional details JSON whose IDs should be excluded from this output.",
+    )
     parser.add_argument("--limit", type=int, default=DEFAULT_GAME_LIMIT, help="Fetch only the first N games.")
     parser.add_argument(
         "--min-users-rated",
@@ -258,6 +273,9 @@ def read_visual_index_seeds(path):
         if not game_id or not name:
             continue
 
+        if game_id in EXCLUDED_GAME_IDS:
+            continue
+
         seeds.setdefault(game_id, {"id": int(game_id), "name": name})
 
     return seeds
@@ -274,6 +292,9 @@ def read_csv_seeds(path, min_users_rated):
             name = clean_text(row.get("name"))
 
             if not game_id or not name:
+                continue
+
+            if game_id in EXCLUDED_GAME_IDS:
                 continue
 
             users_rated = parse_int(row.get("usersrated"))
@@ -472,11 +493,16 @@ def merge_existing_with_seed(existing, seed):
     return clean_none_values(merged)
 
 
-def preserve_existing_details(details_by_id, existing, refresh=False):
+def preserve_existing_details(details_by_id, existing, refresh=False, exclude_ids=None):
     if refresh:
         return
 
+    exclude_ids = exclude_ids or set()
+
     for game_id, details in existing.items():
+        if str(game_id) in exclude_ids or str(game_id) in EXCLUDED_GAME_IDS:
+            continue
+
         details_by_id.setdefault(str(game_id), details)
 
 
@@ -754,6 +780,33 @@ def load_existing(path):
         raise ValueError(f"Expected object in {path}")
 
     return data
+
+
+def load_detail_ids(path):
+    if not path or not path.exists():
+        return set()
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    if isinstance(data, dict):
+        records = data.values()
+    elif isinstance(data, list):
+        records = data
+    else:
+        raise ValueError(f"Expected object or array in {path}")
+
+    game_ids = set()
+
+    for details in records:
+        if not isinstance(details, dict):
+            continue
+
+        game_id = clean_id(details.get("id"))
+
+        if game_id:
+            game_ids.add(game_id)
+
+    return game_ids
 
 
 def write_details(path, details, pretty=False):

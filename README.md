@@ -5,6 +5,7 @@ Static GitHub Pages build of the GameMatch shelf scanner.
 Current bundle:
 
 - About 5,000 games with local metadata
+- Long-tail game metadata lazy-loaded only when a match needs it
 - YOLO board-game-box model
 
 ## What Works On GitHub Pages
@@ -13,6 +14,7 @@ Current bundle:
 - YOLO board-game-box detection in the browser
 - Server-side visual matching through your GameMatch backend
 - Local game metadata from `data/game_details.json`
+- Lazy obscure metadata from `data/game_details_obscure.json`
 - Player count, duration, and complexity filters
 - CSV-backed rank, rating, expansion, and game-type tags for advanced filters
 - Optional contributor mode when connected to a GameMatch backend
@@ -94,6 +96,7 @@ When you collect better user references locally, rebuild the backend user-refere
 If you refresh the game metadata for the browser filters/details, replace:
 
 - `data/game_details.json`
+- `data/game_details_obscure.json`
 
 The default metadata build targets the top 5,000 CSV-ranked games with at least 50 ratings, while preserving existing BGG-enriched records already in `data/game_details.json`:
 
@@ -107,4 +110,15 @@ That fast build does not call BGG. To enrich records with BGG XML fields such as
 python3 scripts/build_game_details.py --csv /Users/maripi/Desktop/GameMatch-web/boardgames_ranks.csv --allow-fallback
 ```
 
-For a heavier long-tail local database, use `--limit 0 --skip-bgg`; expect a much larger file.
+To build the optional long-tail catalog without making startup slower, generate a second file that excludes the core catalog. The app only fetches it when a confident match is missing from `data/game_details.json`:
+
+```bash
+python3 scripts/build_game_details.py \
+  --csv /Users/maripi/Desktop/GameMatch-web/boardgames_ranks.csv \
+  --output data/game_details_obscure.json \
+  --limit 0 \
+  --skip-bgg \
+  --exclude-details data/game_details.json
+```
+
+The long-tail file is CSV-backed unless you explicitly enrich it later, so some obscure games may show rank/rating/year but not player count, duration, or weight yet.

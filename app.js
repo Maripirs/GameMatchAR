@@ -7,6 +7,7 @@ const MAX_CROPS_PER_SCAN = 16;
 const MAX_UPLOAD_IMAGE_SIDE = 2400;
 const MATCH_CONCURRENCY = 1;
 const GAME_DETAILS_URL = "./data/game_details.json";
+const GAME_OBSCURE_DETAILS_URL = "./data/game_details_obscure.json";
 const GAME_SEARCH_INDEX_URL = "./data/games_index.json";
 const BACKEND_MATCH_TIMEOUT_MS = 20000;
 const BACKEND_HEALTH_TIMEOUT_MS = 5000;
@@ -86,6 +87,9 @@ let backendMatcherLoadPromise = null;
 let backendMatcherAvailable = false;
 let backendMatcherUnavailable = false;
 let gameDetailsLoadPromise = null;
+let obscureGameDetailsLoadPromise = null;
+let obscureGameDetailsLoaded = false;
+let obscureGameDetailsAvailable = true;
 let gameSearchLoadPromise = null;
 let gameSearchIndex = [];
 let gameSearchById = new Map();
@@ -385,6 +389,10 @@ async function processImageCanvas(sourceCanvas, displayElement) {
 
         await ensureGameDetailsLoaded();
         card.setMatches(matches);
+
+        if (card.isConfident && !card.details) {
+          await card.resolveDetails();
+        }
       } catch (error) {
         if (card.dismissed) {
           return;
@@ -684,7 +692,10 @@ function createMatchCard(cropCanvas, detection, index) {
       meta.textContent = `BGG ${best.id} · ${formatMatchSource(best)}`;
       score.textContent = formatMatchScoreText(best);
       card.dataset.score = String(matchSortScore(best));
-      renderGameDetails(details, matches, { force: this.isConfident });
+      renderGameDetails(details, matches, {
+        force: this.isConfident,
+        detailsRecord: this.details,
+      });
       this.applyFilters();
       updateFeedbackActions(this);
       refreshSelectedMatchCard(this);
@@ -707,11 +718,44 @@ function createMatchCard(cropCanvas, detection, index) {
       meta.textContent = `BGG ${game.id} · corrected`;
       score.textContent = "Saved as correct";
       card.dataset.score = "1";
-      renderGameDetails(details, this.matches, { force: true });
+      renderGameDetails(details, this.matches, {
+        force: true,
+        detailsRecord: this.details,
+      });
       this.applyFilters();
       refreshSelectedMatchCard(this);
     },
-    confirmMatch() {
+    async resolveDetails({ force = false } = {}) {
+      const best = this.matches[0];
+
+      if (!best || this.dismissed) {
+        return false;
+      }
+
+      const detailsRecord = await ensureDetailsForGame(best.id);
+
+      if (
+        this.dismissed
+        || !this.matches[0]
+        || Number(this.matches[0].id) !== Number(best.id)
+      ) {
+        return false;
+      }
+
+      if (!detailsRecord) {
+        return false;
+      }
+
+      this.details = detailsRecord;
+      renderGameDetails(details, this.matches, {
+        force: force || this.isConfident,
+        detailsRecord: this.details,
+      });
+      this.applyFilters();
+      refreshSelectedMatchCard(this);
+      return true;
+    },
+    async confirmMatch() {
       const best = this.matches[0];
 
       if (!best) {
@@ -721,9 +765,13 @@ function createMatchCard(cropCanvas, detection, index) {
       this.userConfirmed = true;
       this.isConfident = true;
       this.details = gameDetailsById.get(Number(best.id)) || null;
-      renderGameDetails(details, this.matches, { force: true });
+      renderGameDetails(details, this.matches, {
+        force: true,
+        detailsRecord: this.details,
+      });
       this.applyFilters();
       refreshSelectedMatchCard(this);
+      await this.resolveDetails({ force: true });
     },
     setError(text, options = {}) {
       this.matches = [];
@@ -1368,17 +1416,10 @@ async function loadGameDetails() {
     }
 
     const payload = await response.json();
-    const records = Array.isArray(payload)
-      ? payload
-      : Object.values(payload);
+    gameDetailsById = new Map();
+    const loadedCount = mergeGameDetailPayload(payload);
 
-    gameDetailsById = new Map(
-      records
-        .filter((game) => game?.id && game.name)
-        .map((game) => [Number(game.id), game])
-    );
-
-    console.log(`Loaded ${gameDetailsById.size} game detail records.`);
+    console.log(`Loaded ${loadedCount} core game detail records.`);
   } catch (error) {
     console.warn("Game details unavailable:", error);
     gameDetailsById = new Map();
@@ -1391,6 +1432,81 @@ function ensureGameDetailsLoaded() {
   }
 
   return gameDetailsLoadPromise;
+}
+
+function detailRecordsFromPayload(payload) {
+  return Array.isArray(payload)
+    ? payload
+    : Object.values(payload || {});
+}
+
+function mergeGameDetailPayload(payload) {
+  let count = 0;
+
+  for (const game of detailRecordsFromPayload(payload)) {
+    const gameId = Number(game?.id);
+
+    if (!Number.isInteger(gameId) || gameId <= 0 || !game.name) {
+      continue;
+    }
+
+    gameDetailsById.set(gameId, game);
+    count += 1;
+  }
+
+  return count;
+}
+
+async function ensureObscureGameDetailsLoaded() {
+  await ensureGameDetailsLoaded();
+
+  if (obscureGameDetailsLoaded || !obscureGameDetailsAvailable) {
+    return;
+  }
+
+  if (!obscureGameDetailsLoadPromise) {
+    obscureGameDetailsLoadPromise = loadObscureGameDetails().catch((error) => {
+      obscureGameDetailsLoadPromise = null;
+      throw error;
+    });
+  }
+
+  return obscureGameDetailsLoadPromise;
+}
+
+async function loadObscureGameDetails() {
+  try {
+    const response = await fetch(GAME_OBSCURE_DETAILS_URL, { cache: "no-store" });
+
+    if (!response.ok) {
+      throw new Error(`Could not load obscure game details: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const loadedCount = mergeGameDetailPayload(payload);
+    obscureGameDetailsLoaded = true;
+    console.log(`Loaded ${loadedCount} obscure game detail records.`);
+  } catch (error) {
+    obscureGameDetailsAvailable = false;
+    console.warn("Obscure game details unavailable:", error);
+  }
+}
+
+async function ensureDetailsForGame(gameId) {
+  const normalizedGameId = Number(gameId);
+
+  if (!Number.isInteger(normalizedGameId) || normalizedGameId <= 0) {
+    return null;
+  }
+
+  await ensureGameDetailsLoaded();
+
+  if (gameDetailsById.has(normalizedGameId)) {
+    return gameDetailsById.get(normalizedGameId);
+  }
+
+  await ensureObscureGameDetailsLoaded();
+  return gameDetailsById.get(normalizedGameId) || null;
 }
 
 function ensureGameSearchIndexLoaded() {
@@ -2477,7 +2593,7 @@ async function submitRecognitionFeedback(card, action) {
     card.card.classList.toggle("feedbackDenied", action === "deny");
 
     if (action === "confirm") {
-      card.confirmMatch();
+      await card.confirmMatch();
       refreshResultCards();
       feedbackStatus.textContent = acceptedFeedbackText(card);
       setStatus(`${best.name} confirmed.`);
@@ -2568,6 +2684,7 @@ async function submitCorrectedReference(event, card) {
     card.card.classList.add("feedbackConfirmed");
     card.card.classList.remove("feedbackDenied");
     card.setCorrectedGame(game);
+    await card.resolveDetails({ force: true });
     refreshResultCards();
     hideCorrectionPrompt(card, { clear: false });
     feedbackStatus.textContent = "Corrected";
@@ -2770,16 +2887,28 @@ function evaluateCardAgainstFilters(card) {
 function gameFitsFilters(details, filters) {
   const reasons = [];
 
-  if (filters.players && !supportsPlayerCount(details, filters.players)) {
-    reasons.push(`Not ${filters.players} players`);
+  if (filters.players) {
+    const playerResult = checkPlayerCount(details, filters.players);
+
+    if (!playerResult.fits) {
+      reasons.push(playerResult.reason);
+    }
   }
 
-  if (filters.maxTime && !supportsMaxTime(details, filters.maxTime)) {
-    reasons.push(`Over ${filters.maxTime} min`);
+  if (filters.maxTime) {
+    const timeResult = checkMaxTime(details, filters.maxTime);
+
+    if (!timeResult.fits) {
+      reasons.push(timeResult.reason);
+    }
   }
 
-  if (filters.maxWeight < 5 && !supportsComplexity(details, filters.maxWeight)) {
-    reasons.push(`Above ${filters.complexityLabel.toLowerCase()}`);
+  if (filters.maxWeight < 5) {
+    const complexityResult = checkComplexity(details, filters.maxWeight, filters.complexityLabel);
+
+    if (!complexityResult.fits) {
+      reasons.push(complexityResult.reason);
+    }
   }
 
   return {
@@ -2788,38 +2917,49 @@ function gameFitsFilters(details, filters) {
   };
 }
 
-function supportsPlayerCount(details, players) {
+function checkPlayerCount(details, players) {
   const minPlayers = cleanNumber(details.min_players);
   const maxPlayers = cleanNumber(details.max_players);
 
   if (!minPlayers && !maxPlayers) {
-    return false;
+    return { fits: false, reason: "No player data" };
   }
 
-  return players >= (minPlayers || maxPlayers) && players <= (maxPlayers || minPlayers);
+  const fits = players >= (minPlayers || maxPlayers) && players <= (maxPlayers || minPlayers);
+
+  return {
+    fits,
+    reason: fits ? "" : `Not ${players} players`,
+  };
 }
 
-function supportsMaxTime(details, maxTime) {
+function checkMaxTime(details, maxTime) {
   const duration = cleanNumber(details.max_playtime || details.playing_time);
 
   if (!duration) {
-    return false;
+    return { fits: false, reason: "No time data" };
   }
 
-  return duration <= maxTime;
+  return {
+    fits: duration <= maxTime,
+    reason: duration <= maxTime ? "" : `Over ${maxTime} min`,
+  };
 }
 
-function supportsComplexity(details, maxWeight) {
+function checkComplexity(details, maxWeight, complexityLabel) {
   const weight = cleanNumber(details.average_weight);
 
   if (!weight) {
-    return false;
+    return { fits: false, reason: "No weight data" };
   }
 
-  return weight <= maxWeight;
+  return {
+    fits: weight <= maxWeight,
+    reason: weight <= maxWeight ? "" : `Above ${complexityLabel.toLowerCase()}`,
+  };
 }
 
-function renderGameDetails(container, matches, { force = false } = {}) {
+function renderGameDetails(container, matches, { force = false, detailsRecord = null } = {}) {
   container.replaceChildren();
 
   if (!force && !isConfidentMatch(matches)) {
@@ -2831,7 +2971,7 @@ function renderGameDetails(container, matches, { force = false } = {}) {
   container.classList.remove("muted");
 
   const best = matches[0];
-  const details = gameDetailsById.get(Number(best.id));
+  const details = detailsRecord || gameDetailsById.get(Number(best.id));
 
   if (!details) {
     container.textContent = "No local details for this game yet.";
@@ -2843,6 +2983,10 @@ function renderGameDetails(container, matches, { force = false } = {}) {
     ["Players", formatPlayers(details)],
     ["Time", formatDuration(details)],
     ["Weight", formatWeight(details.average_weight)],
+    ["Rank", formatRank(details.rank)],
+    ["Rating", formatRating(details.average_rating)],
+    ["Type", formatGameTypeTags(details.game_type_tags)],
+    ["Year", formatYear(details.year_published)],
   ].filter(([, value]) => value);
 
   for (const [label, value] of rows) {
@@ -2970,6 +3114,46 @@ function formatWeight(value) {
   const weight = cleanNumber(value);
 
   return weight ? `${weight.toFixed(1)} / 5` : "";
+}
+
+function formatRank(value) {
+  const rank = cleanNumber(value);
+
+  return rank ? `#${rank}` : "";
+}
+
+function formatRating(value) {
+  const rating = cleanNumber(value);
+
+  return rating ? rating.toFixed(1) : "";
+}
+
+function formatGameTypeTags(tags) {
+  if (!Array.isArray(tags) || !tags.length) {
+    return "";
+  }
+
+  return tags
+    .map(formatGameTypeTag)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(", ");
+}
+
+function formatGameTypeTag(tag) {
+  const words = String(tag || "").replace(/_/g, " ").trim();
+
+  if (!words) {
+    return "";
+  }
+
+  return words.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function formatYear(value) {
+  const year = cleanNumber(value);
+
+  return year ? String(year) : "";
 }
 
 function cleanNumber(value) {
