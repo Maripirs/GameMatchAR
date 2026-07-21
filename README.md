@@ -4,7 +4,7 @@ Static GitHub Pages build of the GameMatch shelf scanner.
 
 Current bundle:
 
-- 541 games with local metadata
+- About 5,000 games with local metadata
 - YOLO board-game-box model
 
 ## What Works On GitHub Pages
@@ -14,6 +14,7 @@ Current bundle:
 - Server-side visual matching through your GameMatch backend
 - Local game metadata from `data/game_details.json`
 - Player count, duration, and complexity filters
+- CSV-backed rank, rating, expansion, and game-type tags for advanced filters
 - Optional contributor mode when connected to a GameMatch backend
 - YOLO, backend health, and game metadata begin loading as soon as the app opens
 
@@ -93,3 +94,17 @@ When you collect better user references locally, rebuild the backend user-refere
 If you refresh the game metadata for the browser filters/details, replace:
 
 - `data/game_details.json`
+
+The default metadata build targets the top 5,000 CSV-ranked games with at least 50 ratings, while preserving existing BGG-enriched records already in `data/game_details.json`:
+
+```bash
+python3 scripts/build_game_details.py --csv /Users/maripi/Desktop/GameMatch-web/boardgames_ranks.csv --skip-bgg
+```
+
+That fast build does not call BGG. To enrich records with BGG XML fields such as minimum age, categories, mechanics, families, designers, publishers, player-count polls, and language-dependence data, run without `--skip-bgg`:
+
+```bash
+python3 scripts/build_game_details.py --csv /Users/maripi/Desktop/GameMatch-web/boardgames_ranks.csv --allow-fallback
+```
+
+For a heavier long-tail local database, use `--limit 0 --skip-bgg`; expect a much larger file.

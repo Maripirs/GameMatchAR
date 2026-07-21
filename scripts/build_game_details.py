@@ -19,6 +19,26 @@ DEFAULT_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0 Safari/537.36 GameMatchAR/0.1"
 )
+DEFAULT_GAME_LIMIT = 5000
+DEFAULT_MIN_USERS_RATED = 50
+CSV_SUBDOMAIN_RANK_FIELDS = {
+    "abstracts_rank": "abstract",
+    "cgs_rank": "customizable",
+    "childrensgames_rank": "children",
+    "familygames_rank": "family",
+    "partygames_rank": "party",
+    "strategygames_rank": "strategy",
+    "thematic_rank": "thematic",
+    "wargames_rank": "war",
+}
+BGG_LINK_TYPES = {
+    "boardgamecategory": "categories",
+    "boardgamemechanic": "mechanics",
+    "boardgamefamily": "families",
+    "boardgamedesigner": "designers",
+    "boardgameartist": "artists",
+    "boardgamepublisher": "publishers",
+}
 
 
 def main():
@@ -40,15 +60,29 @@ def main():
 
     existing = load_existing(output_path)
 
+    if args.skip_bgg:
+        details_by_id = {
+            str(seed["id"]): merge_existing_with_seed(existing.get(str(seed["id"])), seed)
+            for seed in seeds
+        }
+        preserve_existing_details(details_by_id, existing, refresh=args.refresh)
+        print(f"Source games: {len(seeds)}")
+        print("Using BGG API: no (--skip-bgg)")
+        print(f"Output: {output_path}")
+        write_details(output_path, sort_details(details_by_id), pretty=args.pretty)
+        print(f"Done. Wrote {len(details_by_id)} games.")
+        return
+
     if args.refresh:
         details_by_id = {}
         pending = seeds
     else:
         details_by_id = {
-            str(game_id): details
-            for game_id, details in existing.items()
-            if str(game_id) in {str(seed["id"]) for seed in seeds}
+            str(seed["id"]): merge_existing_with_seed(existing.get(str(seed["id"])), seed)
+            for seed in seeds
+            if str(seed["id"]) in existing
         }
+        preserve_existing_details(details_by_id, existing, refresh=args.refresh)
         pending = [seed for seed in seeds if str(seed["id"]) not in details_by_id]
 
     print(f"Source games: {len(seeds)}")
@@ -57,7 +91,7 @@ def main():
     print(f"Output: {output_path}")
 
     if not pending:
-        write_details(output_path, sort_details(details_by_id))
+        write_details(output_path, sort_details(details_by_id), pretty=args.pretty)
         return
 
     fetched_count = 0
@@ -103,7 +137,7 @@ def main():
             details_by_id[game_id] = details
             fetched_count += 1
 
-        write_details(output_path, sort_details(details_by_id))
+        write_details(output_path, sort_details(details_by_id), pretty=args.pretty)
 
         if fetched_count < len(pending):
             time.sleep(args.delay)
@@ -139,7 +173,7 @@ def parse_args():
     parser.add_argument(
         "--ids-from",
         choices=["visual-index", "csv", "both"],
-        default="visual-index",
+        default="csv",
         help="Which source decides the game IDs to fetch.",
     )
     parser.add_argument(
@@ -148,18 +182,24 @@ def parse_args():
         default=Path("data/game_details.json"),
         help="Output JSON path.",
     )
-    parser.add_argument("--limit", type=int, default=0, help="Fetch only the first N games.")
+    parser.add_argument("--limit", type=int, default=DEFAULT_GAME_LIMIT, help="Fetch only the first N games.")
     parser.add_argument(
         "--min-users-rated",
         type=int,
-        default=0,
+        default=DEFAULT_MIN_USERS_RATED,
         help="When using CSV IDs, skip games with fewer ratings.",
+    )
+    parser.add_argument(
+        "--skip-bgg",
+        action="store_true",
+        help="Do not call BGG; write CSV-backed records and preserve existing enriched records.",
     )
     parser.add_argument("--batch-size", type=int, default=20)
     parser.add_argument("--delay", type=float, default=2.0, help="Seconds between BGG requests.")
     parser.add_argument("--retries", type=int, default=6)
     parser.add_argument("--retry-delay", type=float, default=3.0)
     parser.add_argument("--refresh", action="store_true", help="Refetch games already in output.")
+    parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON instead of writing compact output.")
     parser.add_argument("--api-url", default=DEFAULT_BGG_THING_URL)
     parser.add_argument(
         "--token",
@@ -208,7 +248,7 @@ def collect_game_seeds(ids_from, visual_index_path, csv_path, min_users_rated):
 
 def read_visual_index_seeds(path):
     data = json.loads(path.read_text(encoding="utf-8"))
-    refs = data.get("refs", data if isinstance(data, list) else [])
+    refs = data.get("refs", []) if isinstance(data, dict) else data if isinstance(data, list) else []
     seeds = {}
 
     for ref in refs:
@@ -245,12 +285,14 @@ def read_csv_seeds(path, min_users_rated):
                 "id": int(game_id),
                 "name": name,
                 "year_published": parse_int(row.get("yearpublished")),
-                "rank": parse_int(row.get("rank")),
+                "rank": parse_rank(row.get("rank")),
                 "users_rated": users_rated,
                 "average_rating": parse_float(row.get("average")),
                 "bayes_average": parse_float(row.get("bayesaverage")),
                 "is_expansion": parse_bool_int(row.get("is_expansion")),
+                "subdomain_ranks": parse_subdomain_ranks(row),
             }
+            seeds[game_id]["game_type_tags"] = game_type_tags(seeds[game_id]["subdomain_ranks"])
 
     return seeds
 
@@ -326,19 +368,26 @@ def parse_bgg_response(body):
 def details_from_item(item, seed):
     game_id = int(item.get("id"))
     primary_name = find_primary_name(item) or seed["name"]
+    links = link_values_by_type(item)
     year = xml_value_int(item, "yearpublished")
     min_players = xml_value_int(item, "minplayers")
     max_players = xml_value_int(item, "maxplayers")
     playing_time = xml_value_int(item, "playingtime")
     min_playtime = xml_value_int(item, "minplaytime")
     max_playtime = xml_value_int(item, "maxplaytime")
+    min_age = xml_value_int(item, "minage")
     average_weight = find_average_weight(item)
     rank = find_boardgame_rank(item) or seed.get("rank")
+    users_rated = rating_value_int(item, "usersrated") or seed.get("users_rated")
+    average_rating = rating_value_float(item, "average") or seed.get("average_rating")
+    bayes_average = rating_value_float(item, "bayesaverage") or seed.get("bayes_average")
+    player_poll = find_suggested_player_counts(item)
 
     return clean_none_values(
         {
             "id": game_id,
             "name": primary_name,
+            "alternate_names": find_alternate_names(item, primary_name),
             "year_published": year or seed.get("year_published"),
             "min_players": min_players,
             "max_players": max_players,
@@ -347,15 +396,29 @@ def details_from_item(item, seed):
             "min_playtime": min_playtime,
             "max_playtime": max_playtime,
             "duration": format_duration(min_playtime, max_playtime, playing_time),
+            "min_age": min_age,
             "average_weight": average_weight,
             "rank": rank,
+            "subdomain_ranks": seed.get("subdomain_ranks"),
+            "game_type_tags": seed.get("game_type_tags"),
+            "categories": links.get("categories"),
+            "mechanics": links.get("mechanics"),
+            "families": links.get("families"),
+            "designers": links.get("designers"),
+            "artists": links.get("artists"),
+            "publishers": links.get("publishers"),
+            "best_player_counts": player_poll.get("best"),
+            "recommended_player_counts": player_poll.get("recommended"),
+            "not_recommended_player_counts": player_poll.get("not_recommended"),
+            "language_dependence": find_language_dependence(item),
             "bgg_url": bgg_url(game_id, primary_name),
             "thumbnail_url": element_text(item, "thumbnail"),
             "image_url": element_text(item, "image"),
-            "users_rated": seed.get("users_rated"),
-            "average_rating": seed.get("average_rating"),
-            "bayes_average": seed.get("bayes_average"),
+            "users_rated": users_rated,
+            "average_rating": average_rating,
+            "bayes_average": bayes_average,
             "is_expansion": seed.get("is_expansion"),
+            "metadata_sources": ["boardgames_ranks", "bgg_xml"],
             "updated_at": now_iso(),
         }
     )
@@ -379,14 +442,42 @@ def fallback_details(seed):
             "duration": None,
             "average_weight": None,
             "rank": seed.get("rank"),
+            "subdomain_ranks": seed.get("subdomain_ranks"),
+            "game_type_tags": seed.get("game_type_tags"),
             "bgg_url": bgg_url(game_id, name),
             "users_rated": seed.get("users_rated"),
             "average_rating": seed.get("average_rating"),
             "bayes_average": seed.get("bayes_average"),
             "is_expansion": seed.get("is_expansion"),
+            "metadata_sources": ["boardgames_ranks"],
             "updated_at": now_iso(),
         }
     )
+
+
+def merge_existing_with_seed(existing, seed):
+    fallback = fallback_details(seed)
+
+    if not existing:
+        return fallback
+
+    merged = {**fallback, **existing}
+    sources = set(fallback.get("metadata_sources", []))
+    sources.update(existing.get("metadata_sources", []))
+
+    if "thumbnail_url" in existing or "image_url" in existing:
+        sources.add("bgg_xml")
+
+    merged["metadata_sources"] = sorted(sources)
+    return clean_none_values(merged)
+
+
+def preserve_existing_details(details_by_id, existing, refresh=False):
+    if refresh:
+        return
+
+    for game_id, details in existing.items():
+        details_by_id.setdefault(str(game_id), details)
 
 
 def find_primary_name(item):
@@ -398,15 +489,131 @@ def find_primary_name(item):
     return clean_text(name.get("value")) if name is not None else None
 
 
+def find_alternate_names(item, primary_name):
+    alternates = []
+    seen = {primary_name.casefold()} if primary_name else set()
+
+    for name in item.findall("name"):
+        value = clean_text(name.get("value"))
+
+        if not value:
+            continue
+
+        key = value.casefold()
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        if name.get("type") != "primary":
+            alternates.append(value)
+
+    return alternates
+
+
+def link_values_by_type(item):
+    links = {target: [] for target in BGG_LINK_TYPES.values()}
+
+    for link in item.findall("link"):
+        target = BGG_LINK_TYPES.get(link.get("type"))
+        value = clean_text(link.get("value"))
+
+        if target and value and value not in links[target]:
+            links[target].append(value)
+
+    return links
+
+
 def find_average_weight(item):
     average_weight = item.find("./statistics/ratings/averageweight")
     return parse_float(average_weight.get("value")) if average_weight is not None else None
+
+
+def rating_value_int(item, tag):
+    element = item.find(f"./statistics/ratings/{tag}")
+    return parse_int(element.get("value")) if element is not None else None
+
+
+def rating_value_float(item, tag):
+    element = item.find(f"./statistics/ratings/{tag}")
+    return parse_float(element.get("value")) if element is not None else None
 
 
 def find_boardgame_rank(item):
     for rank in item.findall("./statistics/ratings/ranks/rank"):
         if rank.get("name") == "boardgame":
             return parse_int(rank.get("value"))
+
+    return None
+
+
+def find_suggested_player_counts(item):
+    poll = find_poll(item, "suggested_numplayers")
+    results = {
+        "best": [],
+        "recommended": [],
+        "not_recommended": [],
+    }
+
+    if poll is None:
+        return results
+
+    for count_results in poll.findall("results"):
+        player_count = clean_text(count_results.get("numplayers"))
+
+        if not player_count:
+            continue
+
+        votes = {
+            clean_text(result.get("value")): parse_int(result.get("numvotes")) or 0
+            for result in count_results.findall("result")
+        }
+        best_votes = votes.get("Best", 0)
+        recommended_votes = votes.get("Recommended", 0)
+        not_recommended_votes = votes.get("Not Recommended", 0)
+
+        if best_votes > recommended_votes and best_votes > not_recommended_votes:
+            results["best"].append(player_count)
+
+        if best_votes + recommended_votes > not_recommended_votes:
+            results["recommended"].append(player_count)
+        elif not_recommended_votes > 0:
+            results["not_recommended"].append(player_count)
+
+    return results
+
+
+def find_language_dependence(item):
+    poll = find_poll(item, "language_dependence")
+
+    if poll is None:
+        return None
+
+    result_nodes = poll.findall("./results/result")
+
+    if not result_nodes:
+        return None
+
+    best = max(result_nodes, key=lambda result: parse_int(result.get("numvotes")) or 0)
+    votes = parse_int(best.get("numvotes"))
+
+    if not votes:
+        return None
+
+    return clean_none_values(
+        {
+            "level": parse_int(best.get("level")),
+            "description": clean_text(best.get("value")),
+            "votes": votes,
+        }
+    )
+
+
+def find_poll(item, name):
+    for poll in item.findall("poll"):
+        if poll.get("name") == name:
+            return poll
 
     return None
 
@@ -423,6 +630,22 @@ def element_text(item, tag):
         return None
 
     return element.text.strip() or None
+
+
+def parse_subdomain_ranks(row):
+    ranks = {}
+
+    for field, tag in CSV_SUBDOMAIN_RANK_FIELDS.items():
+        rank = parse_rank(row.get(field))
+
+        if rank:
+            ranks[tag] = rank
+
+    return ranks
+
+
+def game_type_tags(subdomain_ranks):
+    return sorted(subdomain_ranks)
 
 
 def format_range(min_value, max_value):
@@ -507,8 +730,18 @@ def parse_bool_int(value):
     return bool(parsed)
 
 
+def parse_rank(value):
+    parsed = parse_int(value)
+
+    return parsed if parsed and parsed > 0 else None
+
+
 def clean_none_values(details):
-    return {key: value for key, value in details.items() if value is not None}
+    return {
+        key: value
+        for key, value in details.items()
+        if value is not None and value != [] and value != {}
+    }
 
 
 def load_existing(path):
@@ -523,11 +756,16 @@ def load_existing(path):
     return data
 
 
-def write_details(path, details):
+def write_details(path, details, pretty=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
+    json_text = (
+        json.dumps(details, ensure_ascii=False, indent=2)
+        if pretty
+        else json.dumps(details, ensure_ascii=False, separators=(",", ":"))
+    )
     temp_path.write_text(
-        json.dumps(details, ensure_ascii=False, indent=2) + "\n",
+        json_text + "\n",
         encoding="utf-8",
     )
     temp_path.replace(path)
