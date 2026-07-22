@@ -29,6 +29,7 @@ const CROP_VIEWER_MIN_ZOOM = 0.25;
 const CROP_VIEWER_MAX_ZOOM = 8;
 const CROP_VIEWER_STEP = 1.25;
 const THEME_STORAGE_KEY = "gamematch-theme-preference";
+const CONTRIBUTOR_STORAGE_KEY = "gamematch-contributor-password";
 const THEME_OPTIONS = ["light", "auto", "dark"];
 const CONTRIBUTOR_PASSWORD_HEADER = "X-Contributor-Password";
 const DEBUG_MATCH_LOGS = Boolean(window.GAMEMATCH_DEBUG);
@@ -190,6 +191,7 @@ async function main() {
   setContributorMode(false);
   setControlsEnabled(true);
   setStatus("Loading scanner...");
+  restoreStoredContributorLogin();
   preloadStartupModels();
 }
 
@@ -2158,6 +2160,7 @@ async function loginContributor(event) {
 
     contributorPassword = password;
     contributorApiBase = nextApiBase;
+    saveStoredContributorPassword(password);
     resetBackendMatcherProbe();
 
     contributorPasswordInput.value = "";
@@ -2171,8 +2174,57 @@ async function loginContributor(event) {
   }
 }
 
+async function restoreStoredContributorLogin() {
+  const password = loadStoredContributorPassword();
+
+  if (!password) {
+    return;
+  }
+
+  const nextApiBase = configuredApiBase();
+  contributorStatus.textContent = "Restoring contributor mode...";
+
+  try {
+    const response = await fetchWithTimeout(
+      apiUrl("/contributor-login", nextApiBase),
+      {
+        method: "POST",
+        headers: {
+          [CONTRIBUTOR_PASSWORD_HEADER]: password,
+        },
+      },
+      BACKEND_HEALTH_TIMEOUT_MS
+    );
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok || !result.ok) {
+      const error = new Error(result.detail || `Login failed: ${response.status}`);
+      error.invalidContributorLogin = true;
+      throw error;
+    }
+
+    contributorPassword = password;
+    contributorApiBase = nextApiBase;
+    resetBackendMatcherProbe();
+    contributorPasswordInput.value = "";
+    contributorStatus.textContent = "Contributor mode remembered.";
+    setContributorMode(true);
+  } catch (error) {
+    console.warn("Could not restore contributor mode:", error);
+
+    if (error.invalidContributorLogin) {
+      clearStoredContributorPassword();
+      contributorStatus.textContent = "Saved contributor login expired.";
+      return;
+    }
+
+    contributorStatus.textContent = "Contributor login saved. Backend is not reachable yet.";
+  }
+}
+
 function logoutContributor() {
   contributorPassword = "";
+  clearStoredContributorPassword();
   setContributorMode(false);
   clearContributorReview();
   selectContributorTab("mode", { load: false });
@@ -2195,6 +2247,31 @@ function setContributorMode(enabled) {
 
   for (const card of currentResultCards) {
     updateFeedbackActions(card);
+  }
+}
+
+function loadStoredContributorPassword() {
+  try {
+    return localStorage.getItem(CONTRIBUTOR_STORAGE_KEY) || "";
+  } catch (error) {
+    console.warn("Contributor login storage is unavailable:", error);
+    return "";
+  }
+}
+
+function saveStoredContributorPassword(password) {
+  try {
+    localStorage.setItem(CONTRIBUTOR_STORAGE_KEY, password);
+  } catch (error) {
+    console.warn("Could not remember contributor login:", error);
+  }
+}
+
+function clearStoredContributorPassword() {
+  try {
+    localStorage.removeItem(CONTRIBUTOR_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not clear contributor login:", error);
   }
 }
 
