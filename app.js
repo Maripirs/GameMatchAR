@@ -42,6 +42,7 @@ const statusText = document.getElementById("status");
 const startCameraButton = document.getElementById("startCameraButton");
 const scanButton = document.getElementById("scanButton");
 const backToCameraButton = document.getElementById("backToCameraButton");
+const closeScanButton = document.getElementById("closeScanButton");
 const switchCameraButton = document.getElementById("switchCameraButton");
 const uploadButton = document.getElementById("uploadButton");
 const imageUpload = document.getElementById("imageUpload");
@@ -51,10 +52,19 @@ const playersFilter = document.getElementById("playersFilter");
 const timeFilter = document.getElementById("timeFilter");
 const complexityFilter = document.getElementById("complexityFilter");
 const filterSummary = document.getElementById("filterSummary");
+const advancedFilterToggle = document.getElementById("advancedFilterToggle");
+const advancedFilterPanel = document.getElementById("advancedFilterPanel");
+const minRatingFilter = document.getElementById("minRatingFilter");
+const maxRankFilter = document.getElementById("maxRankFilter");
+const gameTypeFilter = document.getElementById("gameTypeFilter");
+const expansionFilter = document.getElementById("expansionFilter");
+const minYearFilter = document.getElementById("minYearFilter");
 const resultsPanel = document.getElementById("resultsPanel");
 const resultsGrid = document.getElementById("resultsGrid");
 const resultCount = document.getElementById("resultCount");
 const resultsNotice = document.getElementById("resultsNotice");
+const hideResultsButton = document.getElementById("hideResultsButton");
+const showMatchesButton = document.getElementById("showMatchesButton");
 const infoButton = document.getElementById("infoButton");
 const infoPanel = document.getElementById("infoPanel");
 const infoCloseButton = document.getElementById("infoCloseButton");
@@ -120,9 +130,13 @@ main();
 startCameraButton.addEventListener("click", startCameraFromTap);
 scanButton.addEventListener("click", scanCurrentView);
 backToCameraButton.addEventListener("click", backToLiveCamera);
+closeScanButton.addEventListener("click", closeActiveScan);
 switchCameraButton.addEventListener("click", switchCameraFromTap);
 uploadButton.addEventListener("click", () => imageUpload.click());
 imageUpload.addEventListener("change", handleImageUpload);
+advancedFilterToggle.addEventListener("click", toggleAdvancedFilters);
+hideResultsButton.addEventListener("click", hideResultsPanel);
+showMatchesButton.addEventListener("click", showResultsPanel);
 for (const button of exampleButtons) {
   button.addEventListener("click", () => scanExampleImage(button));
 }
@@ -139,7 +153,7 @@ for (const button of contributorTabButtons) {
   button.addEventListener("click", () => selectContributorTab(button.dataset.contributorTab));
 }
 contributorReviewRefreshButton.addEventListener("click", () => loadContributorReview({ force: true }));
-[playersFilter, timeFilter, complexityFilter].forEach((control) => {
+[playersFilter, timeFilter, complexityFilter, minRatingFilter, maxRankFilter, gameTypeFilter, expansionFilter, minYearFilter].forEach((control) => {
   control.addEventListener("input", handleFilterChange);
   control.addEventListener("change", handleFilterChange);
 });
@@ -275,6 +289,15 @@ function backToLiveCamera() {
   showCamera();
   setControlsEnabled(true);
   setStatus("Camera live.");
+}
+
+function closeActiveScan() {
+  clearResults();
+  photoPreview.hidden = true;
+  activeSourceCanvas = null;
+  activeDisplayElement = video;
+  setControlsEnabled(true);
+  setStatus("Choose camera, upload, or try an example.");
 }
 
 async function handleImageUpload() {
@@ -1076,6 +1099,7 @@ function dismissMatchCard(cardApi, direction) {
 
     if (!currentResultCards.length) {
       resultsPanel.hidden = true;
+      showMatchesButton.hidden = true;
       resultCount.textContent = "";
       return;
     }
@@ -2896,6 +2920,14 @@ function hideCorrectionPrompt(card, { clear = true } = {}) {
   }
 }
 
+function toggleAdvancedFilters() {
+  const open = advancedFilterPanel.hidden;
+
+  advancedFilterPanel.hidden = !open;
+  advancedFilterToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  advancedFilterToggle.classList.toggle("isOpen", open);
+}
+
 function handleFilterChange() {
   updateFilterSummary();
 
@@ -2927,6 +2959,28 @@ function updateFilterSummary() {
     parts.push(`${filters.complexityLabel.toLowerCase()} complexity`);
   }
 
+  if (filters.minRating) {
+    parts.push(`${filters.minRating}+ rating`);
+  }
+
+  if (filters.maxRank) {
+    parts.push(`top ${filters.maxRank}`);
+  }
+
+  if (filters.gameType) {
+    parts.push(formatGameTypeTag(filters.gameType));
+  }
+
+  if (filters.expansionMode === "base") {
+    parts.push("base games");
+  } else if (filters.expansionMode === "expansion") {
+    parts.push("expansions");
+  }
+
+  if (filters.minYear) {
+    parts.push(`since ${filters.minYear}`);
+  }
+
   filterSummary.textContent = parts.length ? parts.join(" · ") : "Any game";
 }
 
@@ -2935,13 +2989,25 @@ function getFilters() {
   const maxTime = cleanNumber(timeFilter.value);
   const maxWeight = cleanNumber(complexityFilter.value) || 5;
   const complexityLabel = complexityFilter.selectedOptions[0]?.textContent || "Any";
+  const minRating = cleanNumber(minRatingFilter.value);
+  const maxRank = cleanNumber(maxRankFilter.value);
+  const gameType = gameTypeFilter.value;
+  const expansionMode = expansionFilter.value;
+  const minYear = cleanNumber(minYearFilter.value);
+  const hasAdvanced = Boolean(minRating || maxRank || gameType || expansionMode || minYear);
 
   return {
     players,
     maxTime,
     maxWeight,
     complexityLabel,
-    hasAny: Boolean(players || maxTime || maxWeight < 5),
+    minRating,
+    maxRank,
+    gameType,
+    expansionMode,
+    minYear,
+    hasAdvanced,
+    hasAny: Boolean(players || maxTime || maxWeight < 5 || hasAdvanced),
   };
 }
 
@@ -3021,6 +3087,46 @@ function gameFitsFilters(details, filters) {
     }
   }
 
+  if (filters.minRating) {
+    const ratingResult = checkMinRating(details, filters.minRating);
+
+    if (!ratingResult.fits) {
+      reasons.push(ratingResult.reason);
+    }
+  }
+
+  if (filters.maxRank) {
+    const rankResult = checkMaxRank(details, filters.maxRank);
+
+    if (!rankResult.fits) {
+      reasons.push(rankResult.reason);
+    }
+  }
+
+  if (filters.gameType) {
+    const typeResult = checkGameType(details, filters.gameType);
+
+    if (!typeResult.fits) {
+      reasons.push(typeResult.reason);
+    }
+  }
+
+  if (filters.expansionMode) {
+    const expansionResult = checkExpansionMode(details, filters.expansionMode);
+
+    if (!expansionResult.fits) {
+      reasons.push(expansionResult.reason);
+    }
+  }
+
+  if (filters.minYear) {
+    const yearResult = checkMinYear(details, filters.minYear);
+
+    if (!yearResult.fits) {
+      reasons.push(yearResult.reason);
+    }
+  }
+
   return {
     fits: reasons.length === 0,
     reasons,
@@ -3066,6 +3172,80 @@ function checkComplexity(details, maxWeight, complexityLabel) {
   return {
     fits: weight <= maxWeight,
     reason: weight <= maxWeight ? "" : `Above ${complexityLabel.toLowerCase()}`,
+  };
+}
+
+function checkMinRating(details, minRating) {
+  const rating = cleanNumber(details.average_rating);
+
+  if (!rating) {
+    return { fits: false, reason: "No rating data" };
+  }
+
+  return {
+    fits: rating >= minRating,
+    reason: rating >= minRating ? "" : `Under ${minRating.toFixed(1)} rating`,
+  };
+}
+
+function checkMaxRank(details, maxRank) {
+  const rank = cleanNumber(details.rank);
+
+  if (!rank) {
+    return { fits: false, reason: "No rank data" };
+  }
+
+  return {
+    fits: rank <= maxRank,
+    reason: rank <= maxRank ? "" : `Below top ${maxRank}`,
+  };
+}
+
+function checkGameType(details, gameType) {
+  const tags = Array.isArray(details.game_type_tags) ? details.game_type_tags : [];
+
+  if (!tags.length) {
+    return { fits: false, reason: "No type data" };
+  }
+
+  const fits = tags.includes(gameType);
+
+  return {
+    fits,
+    reason: fits ? "" : `Not ${formatGameTypeTag(gameType).toLowerCase()}`,
+  };
+}
+
+function checkExpansionMode(details, mode) {
+  const isExpansion = details.is_expansion === true;
+
+  if (mode === "base") {
+    return {
+      fits: !isExpansion,
+      reason: isExpansion ? "Expansion" : "",
+    };
+  }
+
+  if (mode === "expansion") {
+    return {
+      fits: isExpansion,
+      reason: isExpansion ? "" : "Not an expansion",
+    };
+  }
+
+  return { fits: true, reason: "" };
+}
+
+function checkMinYear(details, minYear) {
+  const year = cleanNumber(details.year_published);
+
+  if (!year) {
+    return { fits: false, reason: "No year data" };
+  }
+
+  return {
+    fits: year >= minYear,
+    reason: year >= minYear ? "" : `Before ${minYear}`,
   };
 }
 
@@ -3420,8 +3600,27 @@ function cssValue(styles, name, fallback) {
 
 function showResultShell(count) {
   resultsPanel.hidden = false;
+  showMatchesButton.hidden = true;
   resultCount.textContent = `${count}`;
   setResultsNotice("");
+}
+
+function hideResultsPanel() {
+  if (!currentResultCards.length) {
+    return;
+  }
+
+  resultsPanel.hidden = true;
+  showMatchesButton.hidden = false;
+}
+
+function showResultsPanel() {
+  if (!currentResultCards.length) {
+    return;
+  }
+
+  resultsPanel.hidden = false;
+  showMatchesButton.hidden = true;
 }
 
 function sortCards() {
@@ -3466,6 +3665,7 @@ function clearResults(cancelActiveScan = true) {
   currentResultCards = [];
   resultsGrid.replaceChildren();
   resultsPanel.hidden = true;
+  showMatchesButton.hidden = true;
   resultCount.textContent = "";
   setResultsNotice("");
 
@@ -3510,26 +3710,35 @@ function setControlsEnabled(enabled) {
 
   document.body.classList.toggle("cameraLive", liveCamera);
   document.body.classList.toggle("cameraFrozen", frozenFrame);
+  document.body.classList.toggle("imagePreview", imagePreviewActive);
 
-  startCameraButton.hidden = cameraReady;
-  uploadButton.hidden = cameraReady;
+  startCameraButton.hidden = cameraReady || imagePreviewActive;
+  uploadButton.hidden = false;
   examplePanel.hidden = cameraReady || imagePreviewActive;
   scanButton.hidden = !cameraReady || frozenFrame;
   backToCameraButton.hidden = !frozenFrame;
+  closeScanButton.hidden = cameraReady || !imagePreviewActive;
   switchCameraButton.hidden = !cameraReady || frozenFrame;
 
-  startCameraButton.disabled = !enabled || cameraReady;
-  uploadButton.disabled = !enabled || cameraReady;
-  imageUpload.disabled = !enabled || cameraReady;
+  startCameraButton.disabled = !enabled || cameraReady || imagePreviewActive;
+  uploadButton.disabled = !enabled;
+  imageUpload.disabled = !enabled;
   for (const button of exampleButtons) {
     button.disabled = !enabled || cameraReady || imagePreviewActive;
   }
   scanButton.disabled = !enabled || !cameraReady || frozenFrame;
   backToCameraButton.disabled = !enabled || !frozenFrame;
+  closeScanButton.disabled = !enabled || cameraReady || !imagePreviewActive;
   switchCameraButton.disabled = !enabled || !cameraReady || frozenFrame;
   playersFilter.disabled = !enabled;
   timeFilter.disabled = !enabled;
   complexityFilter.disabled = !enabled;
+  advancedFilterToggle.disabled = !enabled;
+  minRatingFilter.disabled = !enabled;
+  maxRankFilter.disabled = !enabled;
+  gameTypeFilter.disabled = !enabled;
+  expansionFilter.disabled = !enabled;
+  minYearFilter.disabled = !enabled;
 }
 
 function isCameraFrameFrozen() {

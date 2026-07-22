@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#080b0d" />
   <title>GameMatch AR</title>
-  <link rel="stylesheet" href="style.css?v=20260721-remember1" />
+  <link rel="stylesheet" href="style.css?v=20260721-advanced1" />
 </head>
 <body>
   <main id="stage" aria-label="GameMatch AR">
@@ -85,7 +85,10 @@
     <section id="filterPanel" aria-label="Game filters">
       <div id="filterHeader">
         <strong>Find games for</strong>
-        <span id="filterSummary">Any game</span>
+        <div id="filterHeaderControls">
+          <span id="filterSummary">Any game</span>
+          <button id="advancedFilterToggle" type="button" aria-expanded="false">Advanced</button>
+        </div>
       </div>
       <div id="filterGrid">
         <label>
@@ -113,6 +116,53 @@
           </select>
         </label>
       </div>
+      <div id="advancedFilterPanel" hidden>
+        <label>
+          <span>Rating</span>
+          <select id="minRatingFilter">
+            <option value="">Any</option>
+            <option value="6">6+</option>
+            <option value="7">7+</option>
+            <option value="8">8+</option>
+          </select>
+        </label>
+        <label>
+          <span>Rank</span>
+          <select id="maxRankFilter">
+            <option value="">Any</option>
+            <option value="100">Top 100</option>
+            <option value="500">Top 500</option>
+            <option value="1000">Top 1000</option>
+            <option value="5000">Top 5000</option>
+          </select>
+        </label>
+        <label>
+          <span>Type</span>
+          <select id="gameTypeFilter">
+            <option value="">Any</option>
+            <option value="family">Family</option>
+            <option value="party">Party</option>
+            <option value="strategy">Strategy</option>
+            <option value="thematic">Thematic</option>
+            <option value="abstract">Abstract</option>
+            <option value="war">War</option>
+            <option value="children">Children</option>
+            <option value="customizable">Customizable</option>
+          </select>
+        </label>
+        <label>
+          <span>Version</span>
+          <select id="expansionFilter">
+            <option value="">Any</option>
+            <option value="base">Base games</option>
+            <option value="expansion">Expansions</option>
+          </select>
+        </label>
+        <label>
+          <span>Since</span>
+          <input id="minYearFilter" type="number" min="1900" max="2100" inputmode="numeric" placeholder="Any" />
+        </label>
+      </div>
     </section>
 
     <section id="controls">
@@ -122,6 +172,7 @@
         <span aria-hidden="true">↻</span>
       </button>
       <button id="backToCameraButton" type="button" hidden>Back to Camera</button>
+      <button id="closeScanButton" type="button" hidden>Close Scan</button>
       <button id="uploadButton" type="button">Upload</button>
       <input id="imageUpload" type="file" accept="image/*,.heic,.heif" />
     </section>
@@ -143,11 +194,15 @@
     <section id="resultsPanel" hidden>
       <div id="resultsHeader">
         <strong>Matches</strong>
-        <span id="resultCount"></span>
+        <div id="resultsHeaderActions">
+          <span id="resultCount"></span>
+          <button id="hideResultsButton" type="button">Hide</button>
+        </div>
       </div>
       <div id="resultsNotice" class="resultsNotice" hidden></div>
       <div id="resultsGrid"></div>
     </section>
+    <button id="showMatchesButton" type="button" hidden>Matches</button>
   </main>
 
   <script async src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
@@ -160,6 +215,6 @@
           : "";
     }
   </script>
-  <script type="module" src="app.js?v=20260721-remember1"></script>
+  <script type="module" src="app.js?v=20260721-advanced1"></script>
 </body>
 </html>

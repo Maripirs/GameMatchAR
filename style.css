@@ -664,26 +664,58 @@ body.contributorMode #infoButton {
   white-space: nowrap;
 }
 
+#filterHeaderControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+#advancedFilterToggle {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 780;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#advancedFilterToggle.isOpen {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-strong);
+}
+
 #filterGrid {
   display: grid;
   grid-template-columns: 0.82fr 1fr 1fr;
   gap: 8px;
 }
 
-#filterGrid label {
+#filterGrid label,
+#advancedFilterPanel label {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
-#filterGrid label span {
+#filterGrid label span,
+#advancedFilterPanel label span {
   color: var(--app-soft);
   font-size: 11px;
   line-height: 1;
 }
 
 #filterGrid input,
-#filterGrid select {
+#filterGrid select,
+#advancedFilterPanel input,
+#advancedFilterPanel select {
   width: 100%;
   min-height: 38px;
   border: 1px solid var(--panel-border);
@@ -698,8 +730,26 @@ body.contributorMode #infoButton {
   padding: 8px 7px;
 }
 
-#filterGrid select {
+#filterGrid select,
+#advancedFilterPanel select {
   padding: 8px 5px;
+}
+
+#advancedFilterPanel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+}
+
+#advancedFilterPanel[hidden] {
+  display: none;
+}
+
+#advancedFilterPanel input {
+  padding: 8px 7px;
 }
 
 #controls {
@@ -714,7 +764,12 @@ body.contributorMode #infoButton {
 }
 
 body.cameraLive #controls {
-  grid-template-columns: minmax(0, 1fr) 58px;
+  grid-template-columns: minmax(0, 1fr) 58px 86px;
+}
+
+body.cameraFrozen #controls,
+body.imagePreview #controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 #controls button {
@@ -745,6 +800,11 @@ body.cameraLive #scanButton {
   grid-column: 1;
 }
 
+body.cameraLive #uploadButton {
+  grid-column: 3;
+  min-height: 62px;
+}
+
 .switchIconButton {
   grid-column: 2;
   display: grid;
@@ -761,6 +821,24 @@ body.cameraLive #scanButton {
 }
 
 #backToCameraButton {
+  grid-column: 1 / -1;
+  min-height: 58px;
+  background: var(--button-bg);
+  font-size: 17px;
+}
+
+body.cameraFrozen #backToCameraButton,
+body.imagePreview #closeScanButton {
+  grid-column: 1;
+}
+
+body.cameraFrozen #uploadButton,
+body.imagePreview #uploadButton {
+  grid-column: 2;
+  min-height: 58px;
+}
+
+#closeScanButton {
   grid-column: 1 / -1;
   min-height: 58px;
   background: var(--button-bg);
@@ -897,6 +975,52 @@ body.cameraLive #scanButton {
 #resultCount {
   color: var(--app-soft);
   font-size: 13px;
+}
+
+#resultsHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#hideResultsButton,
+#showMatchesButton {
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 76%, transparent);
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 820;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+}
+
+#hideResultsButton:hover,
+#hideResultsButton:focus-visible,
+#showMatchesButton:hover,
+#showMatchesButton:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  outline: 0;
+}
+
+#showMatchesButton {
+  position: fixed;
+  right: 12px;
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  z-index: 4;
+  min-height: 42px;
+  padding: 10px 12px;
+  background: var(--primary-gradient);
+  color: #fffaf2;
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--purple) 30%, transparent);
+}
+
+#showMatchesButton[hidden] {
+  display: none;
 }
 
 #resultsGrid {
@@ -1501,8 +1625,35 @@ body.contributorMode .correctionPanel.isOpen {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  body.cameraLive #controls {
+    grid-template-columns: minmax(0, 1fr) 54px 78px;
+  }
+
+  body.cameraFrozen #controls,
+  body.imagePreview #controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   #controls button {
     min-height: 54px;
+  }
+
+  body.cameraLive #scanButton,
+  body.cameraLive #uploadButton,
+  body.cameraLive .switchIconButton {
+    min-height: 58px;
+  }
+
+  body.cameraLive .switchIconButton {
+    width: 54px;
+  }
+
+  #advancedFilterPanel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #advancedFilterPanel label:last-child {
+    grid-column: 1 / -1;
   }
 
   #examplePanel {
@@ -1528,6 +1679,11 @@ body.contributorMode .correctionPanel.isOpen {
     bottom: calc(128px + env(safe-area-inset-bottom));
     width: auto;
     max-height: min(48vh, 430px);
+  }
+
+  #showMatchesButton {
+    right: 10px;
+    bottom: calc(132px + env(safe-area-inset-bottom));
   }
 
   .matchCard {
