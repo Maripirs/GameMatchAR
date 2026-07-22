@@ -1075,6 +1075,11 @@ body.imagePreview #uploadButton {
   background: linear-gradient(145deg, color-mix(in srgb, var(--success) 18%, transparent), color-mix(in srgb, var(--purple) 10%, transparent));
 }
 
+.matchCard.conditional {
+  border-color: color-mix(in srgb, var(--violet) 50%, var(--blue) 28%);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--violet) 17%, transparent), color-mix(in srgb, var(--blue) 12%, transparent));
+}
+
 .matchCard.isSelected {
   border-color: color-mix(in srgb, var(--blue) 55%, var(--violet));
   box-shadow:
@@ -1306,6 +1311,12 @@ body.imagePreview #uploadButton {
 .filterFit.yes {
   color: #fffaf2;
   background: var(--success);
+}
+
+.filterFit.conditional {
+  color: var(--app-text-strong);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--blue) 42%, transparent), color-mix(in srgb, var(--violet) 46%, transparent));
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .filterFit.no {

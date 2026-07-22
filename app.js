@@ -8,6 +8,7 @@ const MAX_UPLOAD_IMAGE_SIDE = 2400;
 const MATCH_CONCURRENCY = 1;
 const GAME_DETAILS_URL = "./data/game_details.json";
 const GAME_OBSCURE_DETAILS_URL = "./data/game_details_obscure.json";
+const PLAYER_EXPANSION_INDEX_URL = "./data/player_expansion_index.json";
 const GAME_SEARCH_INDEX_URL = "./data/games_index.json";
 const BACKEND_MATCH_TIMEOUT_MS = 20000;
 const BACKEND_HEALTH_TIMEOUT_MS = 5000;
@@ -103,6 +104,8 @@ let gameDetailsLoadPromise = null;
 let obscureGameDetailsLoadPromise = null;
 let obscureGameDetailsLoaded = false;
 let obscureGameDetailsAvailable = true;
+let playerExpansionIndexLoadPromise = null;
+let playerExpansionIndex = new Map();
 let gameSearchLoadPromise = null;
 let gameSearchIndex = [];
 let gameSearchById = new Map();
@@ -445,7 +448,10 @@ async function processImageCanvas(sourceCanvas, displayElement) {
           })));
         }
 
-        await ensureGameDetailsLoaded();
+        await Promise.all([
+          ensureGameDetailsLoaded(),
+          ensurePlayerExpansionIndexLoaded(),
+        ]);
         card.setMatches(matches);
 
         if (card.isConfident && !card.details) {
@@ -571,6 +577,7 @@ async function preloadStartupModels() {
   const requiredTasks = [
     ["detector", ensureDetectorLoaded()],
     ["game details", ensureGameDetailsLoaded()],
+    ["player expansion index", ensurePlayerExpansionIndexLoaded()],
   ];
   const backendTask = ensureBackendMatcherReady({ force: true })
     .then(() => {
@@ -847,6 +854,7 @@ function createMatchCard(cropCanvas, detection, index) {
       details.textContent = options.detailsText || "Start the backend and scan again.";
       card.dataset.score = "-1";
       card.dataset.fit = "0";
+      card.classList.remove("recommended", "conditional", "rejected");
       updateFeedbackActions(this);
       refreshSelectedMatchCard(this);
     },
@@ -855,10 +863,12 @@ function createMatchCard(cropCanvas, detection, index) {
 
       this.fitsFilters = result.fits;
       card.dataset.fit = result.rank;
-      card.classList.toggle("recommended", result.fits);
+      card.classList.toggle("recommended", result.className === "yes");
+      card.classList.toggle("conditional", result.className === "conditional");
       card.classList.toggle("rejected", result.rank === "0");
       fit.className = `filterFit ${result.className}`;
       fit.textContent = result.text;
+      fit.title = result.title || result.text;
     },
   };
 
@@ -1491,6 +1501,91 @@ function ensureGameDetailsLoaded() {
   }
 
   return gameDetailsLoadPromise;
+}
+
+function ensurePlayerExpansionIndexLoaded() {
+  if (!playerExpansionIndexLoadPromise) {
+    playerExpansionIndexLoadPromise = loadPlayerExpansionIndex();
+  }
+
+  return playerExpansionIndexLoadPromise;
+}
+
+async function loadPlayerExpansionIndex() {
+  try {
+    const response = await fetch(PLAYER_EXPANSION_INDEX_URL, { cache: "no-store" });
+
+    if (!response.ok) {
+      throw new Error(`Could not load player expansion index: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    playerExpansionIndex = parsePlayerExpansionIndex(payload);
+    console.log(`Loaded ${playerExpansionIndex.size} player expansion override records.`);
+
+    if (currentResultCards.length) {
+      handleFilterChange();
+    }
+  } catch (error) {
+    console.warn("Player expansion index unavailable:", error);
+    playerExpansionIndex = new Map();
+  }
+}
+
+function parsePlayerExpansionIndex(payload) {
+  const nextIndex = new Map();
+
+  for (const [baseId, entries] of Object.entries(payload || {})) {
+    const gameId = cleanNumber(baseId);
+
+    if (!Number.isInteger(gameId) || gameId <= 0 || !Array.isArray(entries)) {
+      continue;
+    }
+
+    const normalizedEntries = entries
+      .map(normalizePlayerExpansionEntry)
+      .filter(Boolean);
+
+    if (normalizedEntries.length) {
+      nextIndex.set(gameId, normalizedEntries);
+    }
+  }
+
+  return nextIndex;
+}
+
+function normalizePlayerExpansionEntry(entry) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const name = String(entry.name || "").trim();
+  let minPlayers = cleanNumber(entry.min_players ?? entry.minPlayers);
+  let maxPlayers = cleanNumber(entry.max_players ?? entry.maxPlayers);
+
+  if (!name || (!minPlayers && !maxPlayers)) {
+    return null;
+  }
+
+  if (!minPlayers) {
+    minPlayers = maxPlayers;
+  }
+
+  if (!maxPlayers) {
+    maxPlayers = minPlayers;
+  }
+
+  if (maxPlayers < minPlayers) {
+    [minPlayers, maxPlayers] = [maxPlayers, minPlayers];
+  }
+
+  return {
+    id: cleanNumber(entry.id),
+    name,
+    minPlayers,
+    maxPlayers,
+    bggUrl: String(entry.bgg_url || entry.bggUrl || "").trim(),
+  };
 }
 
 function detailRecordsFromPayload(payload) {
@@ -3044,6 +3139,19 @@ function evaluateCardAgainstFilters(card) {
   const result = gameFitsFilters(card.details, filters);
 
   if (result.fits) {
+    if (result.conditionalFits?.length) {
+      const expansion = result.conditionalFits[0];
+      const expansionName = formatExpansionShortName(expansion, card.details);
+
+      return {
+        fits: true,
+        rank: "2",
+        className: "conditional",
+        text: `Fits with ${expansionName}`,
+        title: `Matches the filters if ${expansion.name} is included.`,
+      };
+    }
+
     return {
       fits: true,
       rank: "3",
@@ -3062,12 +3170,19 @@ function evaluateCardAgainstFilters(card) {
 
 function gameFitsFilters(details, filters) {
   const reasons = [];
+  const conditionalFits = [];
 
   if (filters.players) {
     const playerResult = checkPlayerCount(details, filters.players);
 
     if (!playerResult.fits) {
-      reasons.push(playerResult.reason);
+      const expansionResult = checkPlayerExpansionCount(details, filters.players);
+
+      if (expansionResult.fits) {
+        conditionalFits.push(expansionResult.expansion);
+      } else {
+        reasons.push(playerResult.reason);
+      }
     }
   }
 
@@ -3129,6 +3244,7 @@ function gameFitsFilters(details, filters) {
 
   return {
     fits: reasons.length === 0,
+    conditionalFits: reasons.length === 0 ? conditionalFits : [],
     reasons,
   };
 }
@@ -3147,6 +3263,33 @@ function checkPlayerCount(details, players) {
     fits,
     reason: fits ? "" : `Not ${players} players`,
   };
+}
+
+function checkPlayerExpansionCount(details, players) {
+  const expansions = playerExpansionIndex.get(cleanNumber(details.id)) || [];
+  const expansion = expansions.find((entry) => (
+    players >= entry.minPlayers && players <= entry.maxPlayers
+  ));
+
+  return {
+    fits: Boolean(expansion),
+    expansion,
+  };
+}
+
+function formatExpansionShortName(expansion, details) {
+  const fullName = expansion?.name || "player-count expansion";
+  const baseName = String(details?.name || "").trim();
+
+  if (!baseName) {
+    return fullName;
+  }
+
+  if (fullName.toLowerCase().startsWith(baseName.toLowerCase())) {
+    return fullName.slice(baseName.length).replace(/^[\s:-]+/, "").trim() || fullName;
+  }
+
+  return fullName;
 }
 
 function checkMaxTime(details, maxTime) {

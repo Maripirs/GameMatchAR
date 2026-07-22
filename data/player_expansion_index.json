@@ -1,0 +1,128 @@
+{
+  "13": [
+    {
+      "id": 2807,
+      "name": "Catan: 5-6 Player Expansion",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/2807/catan-5-6-player-expansion"
+    }
+  ],
+  "822": [
+    {
+      "id": 2993,
+      "name": "Carcassonne: Inns & Cathedrals",
+      "min_players": 6,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/2993/carcassonne-inns-and-cathedrals"
+    }
+  ],
+  "2653": [
+    {
+      "id": 96323,
+      "name": "Survive: Escape from Atlantis! - 5-6 Player Mini Expansion",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/96323/survive-escape-from-atlantis-5-6-player-mini-expansion"
+    }
+  ],
+  "30549": [
+    {
+      "id": 40849,
+      "name": "Pandemic: On the Brink",
+      "min_players": 5,
+      "max_players": 5,
+      "bgg_url": "https://boardgamegeek.com/boardgame/40849/pandemic-on-the-brink"
+    }
+  ],
+  "169786": [
+    {
+      "id": 199727,
+      "name": "Scythe: Invaders from Afar",
+      "min_players": 6,
+      "max_players": 7,
+      "bgg_url": "https://boardgamegeek.com/boardgame/199727/scythe-invaders-from-afar"
+    }
+  ],
+  "199478": [
+    {
+      "id": 229941,
+      "name": "Flamme Rouge: Peloton",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/229941/flamme-rouge-peloton"
+    }
+  ],
+  "199561": [
+    {
+      "id": 244262,
+      "name": "Sagrada: 5-6 Player Expansion",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/244262/sagrada-5-6-player-expansion"
+    }
+  ],
+  "199792": [
+    {
+      "id": 289057,
+      "name": "Everdell: Bellfaire",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/289057/everdell-bellfaire"
+    }
+  ],
+  "201808": [
+    {
+      "id": 308918,
+      "name": "Clank!: Adventuring Party",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/308918/clank-adventuring-party"
+    }
+  ],
+  "237182": [
+    {
+      "id": 241386,
+      "name": "Root: The Riverfolk Expansion",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/241386/root-the-riverfolk-expansion"
+    }
+  ],
+  "257096": [
+    {
+      "id": 279819,
+      "name": "Run Fight or Die: Reloaded - 5-6 Player Expansion",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/279819/run-fight-or-die-reloaded-5-6-player-expansion"
+    }
+  ],
+  "299963": [
+    {
+      "id": 324330,
+      "name": "Picture Perfect: The 5-6 Players Expansion",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/324330/picture-perfect-the-5-6-players-expansion"
+    }
+  ],
+  "325414": [
+    {
+      "id": 325451,
+      "name": "Happy Little Dinosaurs: 5-6 Player Expansion Pack",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/325451/happy-little-dinosaurs-5-6-player-expansion-pack"
+    }
+  ],
+  "368432": [
+    {
+      "id": 382069,
+      "name": "The Fox Experiment: 5-6 Player Expansion",
+      "min_players": 5,
+      "max_players": 6,
+      "bgg_url": "https://boardgamegeek.com/boardgame/382069/the-fox-experiment-5-6-player-expansion"
+    }
+  ]
+}
