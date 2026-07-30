@@ -1,4 +1,4 @@
-# GameMatch AR
+# GameMatch
 
 Static GitHub Pages build of the GameMatch shelf scanner.
 
