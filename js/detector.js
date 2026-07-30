@@ -1,6 +1,6 @@
-import { canvasToTensor, letterbox, YOLO_INPUT_SIZE } from "./preprocess.js";
+import { canvasToTensor, letterbox, YOLO_INPUT_SIZE } from "./preprocess.js?v=20260730-match1";
 
-const MODEL_PATH = "./models/board-game-box.onnx";
+const MODEL_PATH = "./models/board-game-box.onnx?v=20260730-match1";
 
 export class Detector {
     constructor() {

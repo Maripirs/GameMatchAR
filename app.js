@@ -1,6 +1,6 @@
-import { startCamera, switchCamera } from "./js/camera.js";
-import { Detector } from "./js/detector.js";
-import { cropDetection } from "./js/cropper.js";
+import { startCamera, switchCamera } from "./js/camera.js?v=20260730-match1";
+import { Detector } from "./js/detector.js?v=20260730-match1";
+import { cropDetection } from "./js/cropper.js?v=20260730-match1";
 
 const CROP_CONFIDENCE_THRESHOLD = 0.5;
 const MAX_CROPS_PER_SCAN = 16;
@@ -22,11 +22,11 @@ const SCORE_THRESHOLD_EPSILON = 0.0005;
 const MAX_CORRECTION_SUGGESTIONS = 5;
 const CONTRIBUTOR_RECENT_REFERENCE_LIMIT = 30;
 const CONTRIBUTOR_REVIEW_TIMEOUT_MS = 15000;
-const CARD_DISMISS_MIN_DISTANCE = 58;
-const CARD_DISMISS_MAX_DISTANCE = 105;
-const CARD_DISMISS_RATIO = 0.23;
-const CARD_DISMISS_FLICK_MIN_DISTANCE = 32;
-const CARD_DISMISS_FLICK_VELOCITY = 0.45;
+const CARD_DISMISS_MIN_DISTANCE = 36;
+const CARD_DISMISS_MAX_DISTANCE = 70;
+const CARD_DISMISS_RATIO = 0.15;
+const CARD_DISMISS_FLICK_MIN_DISTANCE = 20;
+const CARD_DISMISS_FLICK_VELOCITY = 0.25;
 const CROP_ZOOM_MAX_SIDE = 420;
 const CROP_ZOOM_MIN_SIDE = 220;
 const CROP_VIEWER_MIN_ZOOM = 0.25;
