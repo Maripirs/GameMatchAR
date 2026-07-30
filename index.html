@@ -5,14 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#080b0d" />
   <title>GameMatch</title>
-  <link rel="stylesheet" href="style.css?v=20260730-review-note1" />
+  <link rel="stylesheet" href="style.css?v=20260730-interior-tap1" />
 </head>
 <body>
   <main id="stage" aria-label="GameMatch">
     <video id="camera" autoplay playsinline muted hidden></video>
     <canvas id="photoPreview" hidden></canvas>
     <canvas id="boxes"></canvas>
-    <button id="exitModifierButton" type="button" aria-label="Exit detection modifier" title="Exit detection modifier" hidden>×</button>
+    <div id="boxEditActions" role="toolbar" aria-label="Selected box actions" hidden>
+      <button id="deleteSelectedBoxButton" type="button" aria-label="Delete selected box" title="Delete selected box">🗑</button>
+      <button id="confirmSelectedBoxButton" type="button" aria-label="Confirm box adjustment" title="Confirm box adjustment">✓</button>
+    </div>
+    <button id="exitModifierButton" type="button" aria-label="Exit detection modifier" title="Exit detection modifier" hidden>
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M6 6l12 12M18 6L6 18"></path>
+      </svg>
+    </button>
     <canvas id="capture" hidden></canvas>
 
     <section id="topBar">
@@ -92,6 +100,14 @@
             <button id="startDetectorTrainingButton" type="button" disabled hidden>Train candidate model</button>
             <p id="detectorReviewStatus"></p>
             <div id="detectorReviewGrid"></div>
+            <div id="untouchedDetectorHeader">
+              <div>
+                <strong>Untouched Scans</strong>
+                <span id="untouchedDetectorCount"></span>
+              </div>
+            </div>
+            <p id="untouchedDetectorStatus"></p>
+            <div id="untouchedDetectorGrid"></div>
           </section>
         </section>
       </div>
@@ -179,6 +195,7 @@
         </label>
       </div>
     </section>
+    <button id="filterVisibilityButton" type="button" aria-expanded="false" hidden>Filters</button>
 
     <section id="controls">
       <button id="startCameraButton" type="button">Start Camera</button>
@@ -192,6 +209,12 @@
       <button id="zoomOutButton" type="button" aria-label="Zoom out" hidden>−</button>
       <button id="finishModifyingButton" type="button" hidden>Done modifying</button>
       <button id="zoomInButton" type="button" aria-label="Zoom in" hidden>+</button>
+      <button id="dinoSuggestButton" type="button" hidden>Automatically detect more boxes</button>
+      <button id="dismissDinoSuggestButton" type="button" aria-label="Dismiss automatic detection" title="Dismiss" hidden>
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
       <button id="uploadButton" type="button">Upload</button>
       <input id="imageUpload" type="file" accept="image/*,.heic,.heif" />
     </section>
@@ -234,6 +257,6 @@
           : "";
     }
   </script>
-  <script type="module" src="app.js?v=20260730-review-note1"></script>
+  <script type="module" src="app.js?v=20260730-interior-tap1"></script>
 </body>
 </html>

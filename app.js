@@ -34,11 +34,15 @@ const CONTRIBUTOR_STORAGE_KEY = "gamematch-contributor-password";
 const THEME_OPTIONS = ["light", "auto", "dark"];
 const CONTRIBUTOR_PASSWORD_HEADER = "X-Contributor-Password";
 const DEBUG_MATCH_LOGS = Boolean(window.GAMEMATCH_DEBUG);
+const DINO_BUTTON_LABEL = "Automatically detect more boxes";
 
 const video = document.getElementById("camera");
 const photoPreview = document.getElementById("photoPreview");
 const captureCanvas = document.getElementById("capture");
 const boxesCanvas = document.getElementById("boxes");
+const boxEditActions = document.getElementById("boxEditActions");
+const deleteSelectedBoxButton = document.getElementById("deleteSelectedBoxButton");
+const confirmSelectedBoxButton = document.getElementById("confirmSelectedBoxButton");
 const exitModifierButton = document.getElementById("exitModifierButton");
 const statusText = document.getElementById("status");
 const startCameraButton = document.getElementById("startCameraButton");
@@ -49,6 +53,8 @@ const modifyBoxesButton = document.getElementById("modifyBoxesButton");
 const zoomOutButton = document.getElementById("zoomOutButton");
 const finishModifyingButton = document.getElementById("finishModifyingButton");
 const zoomInButton = document.getElementById("zoomInButton");
+const dinoSuggestButton = document.getElementById("dinoSuggestButton");
+const dismissDinoSuggestButton = document.getElementById("dismissDinoSuggestButton");
 const switchCameraButton = document.getElementById("switchCameraButton");
 const uploadButton = document.getElementById("uploadButton");
 const imageUpload = document.getElementById("imageUpload");
@@ -58,6 +64,7 @@ const playersFilter = document.getElementById("playersFilter");
 const timeFilter = document.getElementById("timeFilter");
 const complexityFilter = document.getElementById("complexityFilter");
 const filterSummary = document.getElementById("filterSummary");
+const filterVisibilityButton = document.getElementById("filterVisibilityButton");
 const advancedFilterToggle = document.getElementById("advancedFilterToggle");
 const advancedFilterPanel = document.getElementById("advancedFilterPanel");
 const minRatingFilter = document.getElementById("minRatingFilter");
@@ -95,6 +102,9 @@ const detectorReviewRefreshButton = document.getElementById("detectorReviewRefre
 const detectorReviewStatus = document.getElementById("detectorReviewStatus");
 const detectorReviewCount = document.getElementById("detectorReviewCount");
 const detectorReviewGrid = document.getElementById("detectorReviewGrid");
+const untouchedDetectorStatus = document.getElementById("untouchedDetectorStatus");
+const untouchedDetectorCount = document.getElementById("untouchedDetectorCount");
+const untouchedDetectorGrid = document.getElementById("untouchedDetectorGrid");
 const detectorTrainingStatus = document.getElementById("detectorTrainingStatus");
 const startDetectorTrainingButton = document.getElementById("startDetectorTrainingButton");
 const themeColorMeta = document.querySelector('meta[name="theme-color"]');
@@ -139,6 +149,7 @@ let cropViewerState = null;
 let manualBoxMode = false;
 let manualBoxGesture = null;
 let manualDraftDetection = null;
+let selectedBoxEdit = null;
 let modifierZoom = 1;
 let modifierPanX = 0;
 let modifierPanY = 0;
@@ -146,6 +157,7 @@ let modifierGestureStartZoom = 1;
 const modifierTouchPointers = new Map();
 const modifierSuppressedTouchPointers = new Set();
 let modifierTouchGesture = null;
+let filterImageModeActive = false;
 
 initThemeControl();
 setControlsEnabled(false);
@@ -161,12 +173,17 @@ closeScanButton.addEventListener("click", closeActiveScan);
 modifyBoxesButton.addEventListener("click", beginManualBoxMode);
 finishModifyingButton.addEventListener("click", endManualBoxMode);
 exitModifierButton.addEventListener("click", endManualBoxMode);
+deleteSelectedBoxButton.addEventListener("click", deleteSelectedBox);
+confirmSelectedBoxButton.addEventListener("click", confirmSelectedBox);
 zoomOutButton.addEventListener("click", () => changeModifierZoom(-0.25));
 zoomInButton.addEventListener("click", () => changeModifierZoom(0.25));
+dinoSuggestButton.addEventListener("click", suggestDinoBoxes);
+dismissDinoSuggestButton.addEventListener("click", dismissDinoSuggestion);
 switchCameraButton.addEventListener("click", switchCameraFromTap);
 uploadButton.addEventListener("click", () => imageUpload.click());
 imageUpload.addEventListener("change", handleImageUpload);
 advancedFilterToggle.addEventListener("click", toggleAdvancedFilters);
+filterVisibilityButton.addEventListener("click", toggleFilterPanelVisibility);
 hideResultsButton.addEventListener("click", hideResultsPanel);
 showMatchesButton.addEventListener("click", showResultsPanel);
 for (const button of exampleButtons) {
@@ -425,7 +442,15 @@ async function processImageCanvas(sourceCanvas, displayElement) {
     sourceCanvas.detectorAnnotationId = createDetectorAnnotationId();
     sourceCanvas.detectorAnnotationSavePromise = Promise.resolve();
     sourceCanvas.detectorAnnotationSaved = false;
+    sourceCanvas.dinoSuggestionCompleted = false;
+    sourceCanvas.dinoSuggestionDismissed = false;
     drawDetections(confident, sourceCanvas, displayElement);
+
+    if (contributorMode) {
+      queueContributorDetectorAnnotationSave(sourceCanvas).catch((error) => {
+        console.warn("Could not retain contributor detector scan:", error);
+      });
+    }
 
     if (!confident.length) {
       setStatus("No boxes found.");
@@ -543,33 +568,187 @@ function beginManualBoxMode() {
     return;
   }
 
+  hideCropZoomPreview();
   manualBoxMode = true;
   manualBoxGesture = null;
   manualDraftDetection = null;
+  selectedBoxEdit = null;
+  boxEditActions.hidden = true;
   resetModifierTouchGesture();
   modifierZoom = 1;
   modifierPanX = 0;
   modifierPanY = 0;
   document.body.classList.add("manualBoxMode");
+  dinoSuggestButton.textContent = DINO_BUTTON_LABEL;
+  dismissDinoSuggestButton.hidden = Boolean(
+    activeSourceCanvas.dinoSuggestionCompleted
+    || activeSourceCanvas.dinoSuggestionDismissed
+  );
   applyModifierZoom();
   setControlsEnabled(true);
   hideResultsPanel();
-  setStatus("Drag to add a missed box, or tap an existing box to remove it.");
+  setStatus("Drag to add a missed box, or tap an existing box to adjust it.");
 }
 
 function endManualBoxMode() {
+  if (selectedBoxEdit) {
+    confirmSelectedBox();
+  }
   manualBoxMode = false;
   manualBoxGesture = null;
   manualDraftDetection = null;
+  selectedBoxEdit = null;
+  boxEditActions.hidden = true;
   resetModifierTouchGesture();
   modifierZoom = 1;
   modifierPanX = 0;
   modifierPanY = 0;
   document.body.classList.remove("manualBoxMode");
+  boxesCanvas.style.cursor = "";
   applyModifierZoom();
   setControlsEnabled(true);
   redrawActiveDetections();
   setStatus("Finished modifying boxes.");
+}
+
+function dismissDinoSuggestion() {
+  if (activeSourceCanvas) {
+    activeSourceCanvas.dinoSuggestionDismissed = true;
+  }
+  dinoSuggestButton.hidden = true;
+  dismissDinoSuggestButton.hidden = true;
+  setStatus("Automatic box detection dismissed.");
+}
+
+async function suggestDinoBoxes() {
+  const sourceCanvas = activeSourceCanvas;
+  if (!manualBoxMode || !sourceCanvas) {
+    return;
+  }
+  dinoSuggestButton.disabled = true;
+  dismissDinoSuggestButton.hidden = true;
+  sourceCanvas.dinoSuggestionCompleted = true;
+  dinoSuggestButton.textContent = "Detecting more boxes...";
+  setStatus("DINO is looking for missed boxes...");
+  try {
+    const formData = new FormData();
+    formData.append(
+      "existing_boxes",
+      JSON.stringify(normalizedDetectorBoxes(sourceCanvas, sourceCanvas.lastDetections)),
+    );
+    let suggestionPath = "/detector-dino-suggestions";
+    let suggestionHeaders = {};
+    if (contributorMode && contributorPassword) {
+      await queueContributorDetectorAnnotationSave(sourceCanvas);
+      formData.append("annotation_id", sourceCanvas.detectorAnnotationId);
+      suggestionPath = "/contributor/detector-dino-suggestions";
+      suggestionHeaders = { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword };
+    } else {
+      const blob = await canvasToBlob(sourceCanvas);
+      formData.append("file", blob, "detector-source.jpg");
+    }
+    const response = await fetch(
+      apiUrl(suggestionPath, contributorApiBase),
+      {
+        method: "POST",
+        headers: suggestionHeaders,
+        body: formData,
+      },
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      throw new Error(result.detail || "Could not generate automatic boxes.");
+    }
+    const suggestions = (Array.isArray(result.suggestions) ? result.suggestions : [])
+      .map((box) => ({
+        x: Number(box.x) * sourceCanvas.width,
+        y: Number(box.y) * sourceCanvas.height,
+        width: Number(box.width) * sourceCanvas.width,
+        height: Number(box.height) * sourceCanvas.height,
+        score: Number(box.score) || 0,
+        manual: true,
+        dino: true,
+      }))
+      .filter((box) => (
+        Number.isFinite(box.x)
+        && Number.isFinite(box.y)
+        && box.width >= 16
+        && box.height >= 16
+      ));
+    if (!suggestions.length) {
+      setStatus("DINO did not find any additional boxes.");
+      await finishDinoSuggestionButton("Done — no additional boxes");
+      return;
+    }
+    sourceCanvas.lastDetections = [...(sourceCanvas.lastDetections || []), ...suggestions];
+    sourceCanvas.manualDetections = [...(sourceCanvas.manualDetections || []), ...suggestions];
+    redrawActiveDetections();
+    if (contributorMode) {
+      await queueContributorDetectorAnnotationSave(sourceCanvas);
+    }
+    const firstCardIndex = currentResultCards.length;
+    const cards = suggestions.map((detection, index) => {
+      const cropCanvas = cropDetection(sourceCanvas, detection);
+      return createMatchCard(cropCanvas, detection, firstCardIndex + index);
+    });
+    currentResultCards.push(...cards);
+    showResultShell(currentResultCards.length);
+    hideResultsPanel();
+    setStatus(
+      `DINO added ${suggestions.length} possible ${suggestions.length === 1 ? "box" : "boxes"}. `
+      + "Tap any incorrect purple box to remove it. Matching the new boxes...",
+    );
+    dinoSuggestButton.textContent = `Matching ${suggestions.length} new ${
+      suggestions.length === 1 ? "box" : "boxes"
+    }...`;
+    await processWithConcurrency(cards, MATCH_CONCURRENCY, async (card) => {
+      if (card.dismissed) {
+        return;
+      }
+      try {
+        const matches = await matchCrop(card.cropCanvas, (text) => card.setPending(text));
+        if (card.dismissed) {
+          return;
+        }
+        await Promise.all([
+          ensureGameDetailsLoaded(),
+          ensurePlayerExpansionIndexLoaded(),
+        ]);
+        card.setMatches(matches);
+        if (card.isConfident && !card.details) {
+          await card.resolveDetails();
+        }
+      } catch (error) {
+        if (!card.dismissed) {
+          card.setError("Match failed", {
+            meta: "Automatic box saved",
+            fitText: "Try again",
+            detailsText: "The box was added, but this crop could not be matched.",
+          });
+        }
+      }
+      updateResultStats();
+      sortCards();
+    });
+    setStatus(
+      `DINO added and matched ${suggestions.length} possible `
+      + `${suggestions.length === 1 ? "box" : "boxes"}. Tap incorrect purple boxes to remove them.`,
+    );
+    await finishDinoSuggestionButton("Done");
+  } catch (error) {
+    console.warn("DINO box suggestion failed:", error);
+    setStatus(error.message || "Could not generate automatic boxes.");
+    await finishDinoSuggestionButton("Could not detect more boxes");
+  }
+}
+
+async function finishDinoSuggestionButton(message) {
+  for (let seconds = 3; seconds >= 1; seconds -= 1) {
+    dinoSuggestButton.textContent = `${message} · hiding in ${seconds}...`;
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+  dinoSuggestButton.hidden = true;
+  dismissDinoSuggestButton.hidden = true;
 }
 
 function manualBoxSourcePoint(event) {
@@ -715,6 +894,9 @@ function handleModifierPointerDown(event) {
 }
 
 function handleModifierPointerMove(event) {
+  if (event.pointerType !== "touch") {
+    updateModifierCursor(event);
+  }
   if (event.pointerType !== "touch" || !modifierTouchPointers.has(event.pointerId)) {
     moveManualBox(event);
     return;
@@ -733,6 +915,7 @@ function handleModifierPointerMove(event) {
 function handleModifierPointerUp(event) {
   if (event.pointerType !== "touch") {
     finishManualBox(event);
+    updateModifierCursor(event);
     return;
   }
   const suppressed = modifierSuppressedTouchPointers.has(event.pointerId);
@@ -849,11 +1032,43 @@ function startManualBox(event) {
     return;
   }
 
+  if (selectedBoxEdit) {
+    const handle = selectedBoxHandleAtPoint(point);
+    if (handle || isPointOnDetectionBorder(selectedBoxEdit.draft, point)) {
+      boxesCanvas.style.cursor = handle
+        ? modifierHandleCursor(handle)
+        : "grabbing";
+      manualBoxGesture = {
+        pointerId: event.pointerId,
+        editHandle: handle || "move",
+        startX: point.x,
+        startY: point.y,
+        startBox: { ...selectedBoxEdit.draft },
+      };
+      boxesCanvas.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+  }
+
+  const hitDetection = (
+    findDetectionLabelAtClientPoint(
+      activeSourceCanvas.lastDetections,
+      event.clientX,
+      event.clientY,
+    )
+    || findDetectionAtPoint(activeSourceCanvas.lastDetections, point)
+  );
+  if (selectedBoxEdit) {
+    confirmSelectedBox();
+  }
   manualBoxGesture = {
     pointerId: event.pointerId,
     startX: point.x,
     startY: point.y,
-    hitDetection: findDetectionAtPoint(activeSourceCanvas.lastDetections, point),
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    hitDetection,
   };
   boxesCanvas.setPointerCapture?.(event.pointerId);
   event.preventDefault();
@@ -866,6 +1081,18 @@ function moveManualBox(event) {
 
   const point = manualBoxSourcePoint(event);
   if (!point) {
+    return;
+  }
+
+  if (manualBoxGesture.editHandle && selectedBoxEdit) {
+    selectedBoxEdit.draft = resizedDetection(
+      manualBoxGesture.startBox,
+      manualBoxGesture.editHandle,
+      point.x - manualBoxGesture.startX,
+      point.y - manualBoxGesture.startY,
+    );
+    redrawActiveDetections();
+    event.preventDefault();
     return;
   }
 
@@ -885,7 +1112,20 @@ function finishManualBox(event) {
   }
 
   const gesture = manualBoxGesture;
+  if (gesture.editHandle) {
+    boxesCanvas.releasePointerCapture?.(event.pointerId);
+    manualBoxGesture = null;
+    positionBoxEditActions();
+    redrawActiveDetections();
+    setStatus("Adjust the box, then tap the checkmark to keep it.");
+    event.preventDefault();
+    return;
+  }
   const point = manualBoxSourcePoint(event);
+  const pointerTravel = Math.hypot(
+    event.clientX - gesture.startClientX,
+    event.clientY - gesture.startClientY,
+  );
   const detection = point
     ? rectangleFromPoints(
         gesture.startX,
@@ -898,18 +1138,15 @@ function finishManualBox(event) {
   manualBoxGesture = null;
   manualDraftDetection = null;
 
-  if (
-    gesture.hitDetection
-    && (!detection || (detection.width < 16 && detection.height < 16))
-  ) {
-    removeDetection(gesture.hitDetection);
+  if (gesture.hitDetection && pointerTravel < 10) {
+    selectBoxForEditing(gesture.hitDetection);
     event.preventDefault();
     return;
   }
 
   if (!detection || detection.width < 16 || detection.height < 16) {
     redrawActiveDetections();
-    setStatus("Drag a larger rectangle to add a box, or tap an existing box to remove it.");
+    setStatus("Drag a larger rectangle to add a box, or click an existing box to adjust it.");
     return;
   }
 
@@ -939,13 +1176,266 @@ function rectangleFromPoints(startX, startY, endX, endY) {
   };
 }
 
+function findDetectionBorderAtPoint(detections, point) {
+  return [...(detections || [])].reverse().find((detection) => (
+    isPointOnDetectionBorder(detection, point)
+  )) || null;
+}
+
 function findDetectionAtPoint(detections, point) {
   return [...(detections || [])].reverse().find((detection) => (
+    containsDetectionPoint(detection, point)
+  )) || null;
+}
+
+function findDetectionLabelAtClientPoint(detections, clientX, clientY) {
+  if (!activeSourceCanvas) {
+    return null;
+  }
+  const canvasRect = boxesCanvas.getBoundingClientRect();
+  const displayWidth = canvasRect.width;
+  const displayHeight = canvasRect.height;
+  const baseScale = Math.min(
+    displayWidth / activeSourceCanvas.width,
+    displayHeight / activeSourceCanvas.height,
+  );
+  const scale = baseScale * modifierZoom;
+  const offsetX = (displayWidth - activeSourceCanvas.width * scale) / 2 + modifierPanX;
+  const offsetY = (displayHeight - activeSourceCanvas.height * scale) / 2 + modifierPanY;
+  const localX = clientX - canvasRect.left;
+  const localY = clientY - canvasRect.top;
+  const context = boxesCanvas.getContext("2d");
+  context.save();
+  context.font = "800 13px system-ui, sans-serif";
+  const match = [...(detections || [])].reverse().find((detection) => {
+    const x = detection.x * scale + offsetX;
+    const y = detection.y * scale + offsetY;
+    const label = detection.dino
+      ? `DINO ${detection.score.toFixed(2)}`
+      : detection.manual
+        ? "Manual"
+        : `${detection.score.toFixed(2)}`;
+    const labelPaddingX = 7;
+    const labelHeight = 22;
+    const fittedLabel = fitOverlayLabel(
+      context,
+      label,
+      Math.max(24, displayWidth - labelPaddingX * 2),
+    );
+    const labelWidth = Math.ceil(context.measureText(fittedLabel).width) + labelPaddingX * 2;
+    const labelX = Math.min(Math.max(0, x), Math.max(0, displayWidth - labelWidth));
+    const preferredLabelY = y - labelHeight - 5;
+    const labelY = Math.min(
+      Math.max(0, preferredLabelY >= 0 ? preferredLabelY : y + 5),
+      Math.max(0, displayHeight - labelHeight),
+    );
+    return (
+      localX >= labelX
+      && localX <= labelX + labelWidth
+      && localY >= labelY
+      && localY <= labelY + labelHeight
+    );
+  }) || null;
+  context.restore();
+  return match;
+}
+
+function containsDetectionPoint(detection, point) {
+  return (
     point.x >= detection.x
     && point.x <= detection.x + detection.width
     && point.y >= detection.y
     && point.y <= detection.y + detection.height
-  )) || null;
+  );
+}
+
+function isPointOnDetectionBorder(detection, point) {
+  if (!containsDetectionPoint(detection, point) || !activeSourceCanvas) {
+    return false;
+  }
+  const rect = boxesCanvas.getBoundingClientRect();
+  const scale = Math.min(
+    rect.width / activeSourceCanvas.width,
+    rect.height / activeSourceCanvas.height,
+  ) * modifierZoom;
+  const tolerance = 8 / Math.max(scale, 0.001);
+  const right = detection.x + detection.width;
+  const bottom = detection.y + detection.height;
+  return (
+    Math.abs(point.x - detection.x) <= tolerance
+    || Math.abs(point.x - right) <= tolerance
+    || Math.abs(point.y - detection.y) <= tolerance
+    || Math.abs(point.y - bottom) <= tolerance
+  );
+}
+
+function selectBoxForEditing(detection) {
+  selectedBoxEdit = {
+    original: detection,
+    draft: { ...detection },
+  };
+  boxEditActions.hidden = false;
+  redrawActiveDetections();
+  positionBoxEditActions();
+  setStatus("Drag the handles to resize, drag the outline to move, then confirm or delete.");
+}
+
+function selectedBoxHandleAtPoint(point) {
+  if (!selectedBoxEdit || !activeSourceCanvas) {
+    return null;
+  }
+  const rect = boxesCanvas.getBoundingClientRect();
+  const scale = Math.min(
+    rect.width / activeSourceCanvas.width,
+    rect.height / activeSourceCanvas.height,
+  ) * modifierZoom;
+  const tolerance = 18 / Math.max(scale, 0.001);
+  const box = selectedBoxEdit.draft;
+  const left = box.x;
+  const right = box.x + box.width;
+  const top = box.y;
+  const bottom = box.y + box.height;
+  const centerX = (left + right) / 2;
+  const centerY = (top + bottom) / 2;
+  const handles = [
+    ["nw", left, top], ["n", centerX, top], ["ne", right, top],
+    ["e", right, centerY], ["se", right, bottom], ["s", centerX, bottom],
+    ["sw", left, bottom], ["w", left, centerY],
+  ];
+  return handles.find(([, x, y]) => (
+    Math.hypot(point.x - x, point.y - y) <= tolerance
+  ))?.[0] || null;
+}
+
+function updateModifierCursor(event) {
+  if (!manualBoxMode || !activeSourceCanvas) {
+    boxesCanvas.style.cursor = "";
+    return;
+  }
+  if (manualBoxGesture?.editHandle) {
+    boxesCanvas.style.cursor = manualBoxGesture.editHandle === "move"
+      ? "grabbing"
+      : modifierHandleCursor(manualBoxGesture.editHandle);
+    return;
+  }
+  const point = manualBoxSourcePoint(event);
+  if (!point) {
+    boxesCanvas.style.cursor = "default";
+    return;
+  }
+  const handle = selectedBoxHandleAtPoint(point);
+  if (handle) {
+    boxesCanvas.style.cursor = modifierHandleCursor(handle);
+  } else if (selectedBoxEdit && isPointOnDetectionBorder(selectedBoxEdit.draft, point)) {
+    boxesCanvas.style.cursor = "grab";
+  } else if (
+    findDetectionLabelAtClientPoint(
+      activeSourceCanvas.lastDetections,
+      event.clientX,
+      event.clientY,
+    )
+    || findDetectionBorderAtPoint(activeSourceCanvas.lastDetections, point)
+  ) {
+    boxesCanvas.style.cursor = "pointer";
+  } else {
+    boxesCanvas.style.cursor = "crosshair";
+  }
+}
+
+function modifierHandleCursor(handle) {
+  return {
+    n: "ns-resize",
+    s: "ns-resize",
+    e: "ew-resize",
+    w: "ew-resize",
+    ne: "nesw-resize",
+    sw: "nesw-resize",
+    nw: "nwse-resize",
+    se: "nwse-resize",
+  }[handle] || "move";
+}
+
+function resizedDetection(startBox, handle, deltaX, deltaY) {
+  const sourceWidth = activeSourceCanvas.width;
+  const sourceHeight = activeSourceCanvas.height;
+  const minimumSize = 16;
+  if (handle === "move") {
+    return {
+      ...startBox,
+      x: Math.max(0, Math.min(sourceWidth - startBox.width, startBox.x + deltaX)),
+      y: Math.max(0, Math.min(sourceHeight - startBox.height, startBox.y + deltaY)),
+    };
+  }
+  let left = startBox.x;
+  let right = startBox.x + startBox.width;
+  let top = startBox.y;
+  let bottom = startBox.y + startBox.height;
+  if (handle.includes("w")) left = Math.max(0, Math.min(right - minimumSize, left + deltaX));
+  if (handle.includes("e")) right = Math.min(sourceWidth, Math.max(left + minimumSize, right + deltaX));
+  if (handle.includes("n")) top = Math.max(0, Math.min(bottom - minimumSize, top + deltaY));
+  if (handle.includes("s")) bottom = Math.min(sourceHeight, Math.max(top + minimumSize, bottom + deltaY));
+  return {
+    ...startBox,
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function deleteSelectedBox() {
+  if (!selectedBoxEdit) {
+    return;
+  }
+  const detection = selectedBoxEdit.original;
+  selectedBoxEdit = null;
+  boxEditActions.hidden = true;
+  removeDetection(detection);
+}
+
+function confirmSelectedBox() {
+  if (!selectedBoxEdit) {
+    return;
+  }
+  const { original, draft } = selectedBoxEdit;
+  const changed = (
+    Math.abs(original.x - draft.x) > 0.5
+    || Math.abs(original.y - draft.y) > 0.5
+    || Math.abs(original.width - draft.width) > 0.5
+    || Math.abs(original.height - draft.height) > 0.5
+  );
+  selectedBoxEdit = null;
+  boxEditActions.hidden = true;
+  if (!changed) {
+    redrawActiveDetections();
+    setStatus("Box confirmed.");
+    return;
+  }
+  removeDetection(original);
+  addManualDetection({
+    ...draft,
+    score: 1,
+    manual: true,
+    dino: false,
+  });
+}
+
+function positionBoxEditActions() {
+  if (!selectedBoxEdit || !activeSourceCanvas || boxEditActions.hidden) {
+    return;
+  }
+  const rect = boxesCanvas.getBoundingClientRect();
+  const scale = Math.min(
+    rect.width / activeSourceCanvas.width,
+    rect.height / activeSourceCanvas.height,
+  ) * modifierZoom;
+  const offsetX = (rect.width - activeSourceCanvas.width * scale) / 2 + modifierPanX;
+  const offsetY = (rect.height - activeSourceCanvas.height * scale) / 2 + modifierPanY;
+  const box = selectedBoxEdit.draft;
+  const centerX = rect.left + offsetX + (box.x + box.width / 2) * scale;
+  const top = rect.top + offsetY + box.y * scale;
+  boxEditActions.style.left = `${Math.max(58, Math.min(window.innerWidth - 58, centerX))}px`;
+  boxEditActions.style.top = `${Math.max(66, top - 10)}px`;
 }
 
 function removeDetection(detection) {
@@ -1072,7 +1562,6 @@ async function saveContributorDetectorAnnotation(sourceCanvas) {
   if (
     !contributorMode
     || !contributorPassword
-    || (!hasCorrections && !sourceCanvas.detectorAnnotationSaved)
   ) {
     return;
   }
@@ -1112,11 +1601,16 @@ async function saveContributorDetectorAnnotation(sourceCanvas) {
   if (!response.ok || !result.ok) {
     throw new Error(result.detail || `Annotation save failed: ${response.status}`);
   }
-  sourceCanvas.detectorAnnotationSaved = hasCorrections;
-  setStatus(
-    `Saved ${result.manual_boxes} added and ${result.removed_boxes} removed detector correction`
-    + `${result.manual_boxes + result.removed_boxes === 1 ? "" : "s"}.`,
-  );
+  if (result.annotation_id) {
+    sourceCanvas.detectorAnnotationId = result.annotation_id;
+  }
+  sourceCanvas.detectorAnnotationSaved = true;
+  if (hasCorrections) {
+    setStatus(
+      `Saved ${result.manual_boxes} added and ${result.removed_boxes} removed detector correction`
+      + `${result.manual_boxes + result.removed_boxes === 1 ? "" : "s"}.`,
+    );
+  }
 }
 
 function createDetectorAnnotationId() {
@@ -1213,6 +1707,7 @@ async function matchCropWithBackend(cropCanvas) {
     paligemma_text: result.paligemma_text || "",
     paligemma_candidates: result.paligemma_candidates || [],
     reference_image_path: match.reference_image_path || "",
+    visual_score_available: match.visual_score_available !== false,
     matcher: "backend",
   }));
 }
@@ -1850,7 +2345,13 @@ function enableCropHoverPreview(source) {
 function showCropZoomPreview(source, event) {
   const sourceSize = drawableSourceSize(source);
 
-  if (!cropHoverPreviewQuery?.matches || !sourceSize.width || !sourceSize.height) {
+  if (
+    manualBoxMode
+    || !cropHoverPreviewQuery?.matches
+    || !sourceSize.width
+    || !sourceSize.height
+  ) {
+    hideCropZoomPreview();
     return;
   }
 
@@ -3264,17 +3765,29 @@ async function loadDetectorReview({ force = false } = {}) {
       cache: "no-store",
       headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
     }),
+    fetch(apiUrl("/contributor/detector-annotations?status=unverified&limit=50", contributorApiBase), {
+      cache: "no-store",
+      headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
+    }),
   ])
-    .then(async ([annotationsResponse, trainingResponse]) => {
+    .then(async ([annotationsResponse, trainingResponse, untouchedResponse]) => {
       const annotations = await annotationsResponse.json().catch(() => ({}));
       const training = await trainingResponse.json().catch(() => ({}));
+      const untouched = await untouchedResponse.json().catch(() => ({}));
       if (!annotationsResponse.ok) {
         throw new Error("Could not load detection reviews.");
       }
       if (!trainingResponse.ok) {
         throw new Error("Could not load detection reviews.");
       }
-      renderDetectorReview(annotations.annotations || [], annotations.counts || {});
+      if (!untouchedResponse.ok) {
+        throw new Error("Could not load untouched detector scans.");
+      }
+      renderDetectorReview(
+        annotations.annotations || [],
+        untouched.annotations || [],
+        annotations.counts || {},
+      );
       renderDetectorTrainingStatus(training);
     })
     .catch((error) => {
@@ -3288,13 +3801,15 @@ async function loadDetectorReview({ force = false } = {}) {
   return detectorReviewLoadPromise;
 }
 
-function renderDetectorReview(annotations, counts) {
+function renderDetectorReview(annotations, untouchedAnnotations, counts) {
   for (const url of detectorReviewImageUrls) {
     URL.revokeObjectURL(url);
   }
   detectorReviewImageUrls = [];
   detectorReviewGrid.replaceChildren();
+  untouchedDetectorGrid.replaceChildren();
   const pendingCount = counts.needs_review || 0;
+  const untouchedCount = (counts.unverified || 0) + (counts.no_corrections || 0);
   detectorReviewCount.textContent = pendingCount
     ? `${pendingCount} to review`
     : "";
@@ -3304,9 +3819,18 @@ function renderDetectorReview(annotations, counts) {
   for (const annotation of annotations) {
     detectorReviewGrid.append(createDetectorReviewCard(annotation));
   }
+  untouchedDetectorCount.textContent = untouchedCount
+    ? `${untouchedCount} saved`
+    : "";
+  untouchedDetectorStatus.textContent = untouchedAnnotations.length
+    ? "These scans were saved without box changes. Review them before using them for training."
+    : "No untouched contributor scans have been saved yet.";
+  for (const annotation of untouchedAnnotations) {
+    untouchedDetectorGrid.append(createDetectorReviewCard(annotation, { untouched: true }));
+  }
 }
 
-function createDetectorReviewCard(annotation) {
+function createDetectorReviewCard(annotation, { untouched = false } = {}) {
   const card = document.createElement("article");
   const image = document.createElement("img");
   const body = document.createElement("div");
@@ -3326,8 +3850,8 @@ function createDetectorReviewCard(annotation) {
   actions.className = "contributorReviewActions";
   actions.classList.add("detectorReviewActions");
   status.className = "contributorReviewItemStatus";
-  image.alt = "Corrected detector scan";
-  title.textContent = `Corrected scan ${annotation.annotation_id.slice(0, 8)}`;
+  image.alt = untouched ? "Untouched detector scan" : "Corrected detector scan";
+  title.textContent = `${untouched ? "Untouched" : "Corrected"} scan ${annotation.annotation_id.slice(0, 8)}`;
   meta.textContent = `${annotation.accepted_boxes?.length || 0} accepted · `
     + `${annotation.manual_boxes?.length || 0} added · ${annotation.removed_boxes?.length || 0} removed`;
   legend.innerHTML = [
@@ -3342,7 +3866,7 @@ function createDetectorReviewCard(annotation) {
   openButton.disabled = true;
   approveButton.textContent = "Review & approve";
   rejectButton.textContent = "Reject";
-  status.textContent = "Needs review";
+  status.textContent = untouched ? "Saved for later review" : "Needs review";
   actions.append(openButton, approveButton, rejectButton);
   body.append(title, meta, legend, actions, status);
   card.append(image, body);
@@ -3419,8 +3943,10 @@ async function openDetectorReviewEditor(annotation, card, cardStatus) {
   const canvas = document.createElement("canvas");
   const toolbar = document.createElement("div");
   const hint = document.createElement("p");
+  const hintDismissButton = document.createElement("button");
+  const suggestButton = document.createElement("button");
+  const fitReviewButton = document.createElement("button");
   const undoButton = document.createElement("button");
-  const cancelButton = document.createElement("button");
   const approveButton = document.createElement("button");
   const editorStatus = document.createElement("span");
   const context = canvas.getContext("2d");
@@ -3438,36 +3964,95 @@ async function openDetectorReviewEditor(annotation, card, cardStatus) {
   const history = [];
   let draftStart = null;
   let draftBox = null;
+  let reviewZoom = 1;
+  let reviewPanX = 0;
+  let reviewPanY = 0;
+  let reviewPanGesture = null;
+  let reviewResizeObserver = null;
+  const reviewPointers = new Map();
 
   modal.className = "detectorReviewEditorOverlay";
   windowElement.className = "detectorReviewEditorWindow";
   header.className = "detectorReviewEditorHeader";
-  title.textContent = "Adjust detection boxes";
+  title.textContent = "Review boxes";
   closeButton.type = "button";
   closeButton.className = "ghostButton";
-  closeButton.textContent = "Close";
+  closeButton.textContent = "×";
+  closeButton.setAttribute("aria-label", "Close review");
+  closeButton.title = "Close review";
   canvasWrap.className = "detectorReviewEditorCanvasWrap";
   canvas.className = "detectorReviewEditorCanvas";
   toolbar.className = "detectorReviewEditorToolbar";
-  hint.innerHTML = "<strong>Only confirm when every visible game box is marked.</strong> "
-    + "Drag empty space to add a box. Tap a green or red box to switch between keep and remove. "
-    + "Tap a yellow box to delete it.";
+  hint.innerHTML = "<span><strong>Mark every game</strong> · drag to add · tap to toggle · pinch to zoom · two-finger scroll to pan</span>";
+  hintDismissButton.type = "button";
+  hintDismissButton.textContent = "×";
+  hintDismissButton.setAttribute("aria-label", "Dismiss review instructions");
+  hintDismissButton.title = "Dismiss instructions";
+  hint.append(hintDismissButton);
+  suggestButton.type = "button";
+  fitReviewButton.type = "button";
   undoButton.type = "button";
-  cancelButton.type = "button";
   approveButton.type = "button";
+  suggestButton.textContent = "Auto boxes";
+  fitReviewButton.textContent = "Fit";
+  fitReviewButton.title = "Fit the full image";
   undoButton.textContent = "Undo";
-  cancelButton.textContent = "Cancel";
-  approveButton.textContent = "Approve corrections";
+  approveButton.textContent = "Approve";
   undoButton.disabled = true;
   editorStatus.className = "detectorReviewEditorStatus";
-  toolbar.append(undoButton, cancelButton, approveButton, editorStatus);
+  toolbar.append(
+    suggestButton,
+    fitReviewButton,
+    undoButton,
+    approveButton,
+    editorStatus,
+  );
   header.append(title, closeButton);
-  canvasWrap.append(canvas);
-  windowElement.append(header, hint, canvasWrap, toolbar);
+  canvasWrap.append(canvas, hint);
+  windowElement.append(header, canvasWrap, toolbar);
   modal.append(windowElement);
   document.body.append(modal);
 
+  const applyReviewView = () => {
+    canvas.style.setProperty("--review-zoom", String(reviewZoom));
+    canvas.style.setProperty("--review-pan-x", `${reviewPanX}px`);
+    canvas.style.setProperty("--review-pan-y", `${reviewPanY}px`);
+  };
+  const fitReviewCanvasSize = () => {
+    if (!image.naturalWidth || !image.naturalHeight) {
+      return;
+    }
+    const availableWidth = canvasWrap.clientWidth;
+    const availableHeight = canvasWrap.clientHeight;
+    if (!availableWidth || !availableHeight) {
+      return;
+    }
+    const scale = Math.min(
+      availableWidth / image.naturalWidth,
+      availableHeight / image.naturalHeight,
+    );
+    canvas.style.width = `${Math.max(1, image.naturalWidth * scale)}px`;
+    canvas.style.height = `${Math.max(1, image.naturalHeight * scale)}px`;
+  };
+  const changeReviewZoom = (factor) => {
+    reviewZoom = Math.max(0.5, Math.min(8, reviewZoom * factor));
+    if (reviewZoom <= 1) {
+      reviewPanX = 0;
+      reviewPanY = 0;
+    }
+    applyReviewView();
+    editorStatus.textContent = `Zoom ${Math.round(reviewZoom * 100)}%.`;
+  };
+  const fitReviewImage = () => {
+    fitReviewCanvasSize();
+    reviewZoom = 1;
+    reviewPanX = 0;
+    reviewPanY = 0;
+    applyReviewView();
+    editorStatus.textContent = "Full image fitted.";
+  };
   const close = () => {
+    reviewResizeObserver?.disconnect();
     URL.revokeObjectURL(image.src);
     modal.remove();
   };
@@ -3493,7 +4078,11 @@ async function openDetectorReviewEditor(annotation, card, cardStatus) {
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     const lineWidth = Math.max(3, Math.round(Math.min(canvas.width, canvas.height) / 180));
-    modelBoxes.forEach((box) => drawBox(box, "#32d583", lineWidth));
+    modelBoxes.forEach((box) => drawBox(
+      box,
+      box.source === "dino" ? "#d946ef" : "#32d583",
+      lineWidth,
+    ));
     removedBoxes.forEach((box) => drawBox(box, "#ff3b30", lineWidth));
     manualBoxes.forEach((box) => drawBox(box, "#ffd60a", lineWidth));
     if (draftBox) {
@@ -3534,7 +4123,58 @@ async function openDetectorReviewEditor(annotation, card, cardStatus) {
   };
 
   closeButton.addEventListener("click", close);
-  cancelButton.addEventListener("click", close);
+  hintDismissButton.addEventListener("click", () => {
+    hint.remove();
+  });
+  fitReviewButton.addEventListener("click", fitReviewImage);
+  canvasWrap.addEventListener("wheel", (event) => {
+    if (event.ctrlKey) {
+      changeReviewZoom(event.deltaY < 0 ? 1.15 : 1 / 1.15);
+      event.preventDefault();
+      return;
+    }
+    if (reviewZoom > 1) {
+      reviewPanX -= event.deltaX || (event.shiftKey ? event.deltaY : 0);
+      reviewPanY -= event.shiftKey ? 0 : event.deltaY;
+      applyReviewView();
+      editorStatus.textContent = `Zoom ${Math.round(reviewZoom * 100)}%.`;
+    }
+    event.preventDefault();
+  }, { passive: false });
+  suggestButton.addEventListener("click", async () => {
+    suggestButton.disabled = true;
+    editorStatus.textContent = "Looking for missed boxes...";
+    const formData = new FormData();
+    formData.append("annotation_id", annotation.annotation_id);
+    formData.append("existing_boxes", JSON.stringify([...modelBoxes, ...manualBoxes]));
+    try {
+      const response = await fetch(
+        apiUrl("/contributor/detector-dino-suggestions", contributorApiBase),
+        {
+          method: "POST",
+          headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
+          body: formData,
+        },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) {
+        throw new Error(result.detail || "Could not generate suggestions.");
+      }
+      const suggestions = Array.isArray(result.suggestions) ? result.suggestions : [];
+      if (suggestions.length) {
+        snapshot();
+        modelBoxes.push(...suggestions);
+        redraw();
+      }
+      editorStatus.textContent = suggestions.length
+        ? `${suggestions.length} possible missed ${suggestions.length === 1 ? "box" : "boxes"} added.`
+        : "No additional boxes found.";
+    } catch (error) {
+      editorStatus.textContent = error.message || "Could not generate suggestions.";
+    } finally {
+      suggestButton.disabled = false;
+    }
+  });
   modal.addEventListener("click", (event) => {
     if (event.target === modal) close();
   });
@@ -3547,12 +4187,79 @@ async function openDetectorReviewEditor(annotation, card, cardStatus) {
     undoButton.disabled = history.length === 0;
     redraw();
   });
+  const touchGeometry = () => {
+    const points = Array.from(reviewPointers.values()).slice(0, 2);
+    if (points.length < 2) return null;
+    return {
+      centerX: (points[0].x + points[1].x) / 2,
+      centerY: (points[0].y + points[1].y) / 2,
+      distance: Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y),
+    };
+  };
   canvas.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "touch") {
+      reviewPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      canvas.setPointerCapture?.(event.pointerId);
+      if (reviewPointers.size >= 2) {
+        const geometry = touchGeometry();
+        draftStart = null;
+        draftBox = null;
+        reviewPanGesture = geometry && {
+          touch: true,
+          centerX: geometry.centerX,
+          centerY: geometry.centerY,
+          distance: geometry.distance,
+          zoom: reviewZoom,
+          panX: reviewPanX,
+          panY: reviewPanY,
+        };
+        redraw();
+        event.preventDefault();
+        return;
+      }
+    }
+    if (event.button === 1 || event.shiftKey) {
+      reviewPanGesture = {
+        touch: false,
+        pointerId: event.pointerId,
+        centerX: event.clientX,
+        centerY: event.clientY,
+        panX: reviewPanX,
+        panY: reviewPanY,
+      };
+      canvas.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      return;
+    }
     draftStart = pointFromEvent(event);
     draftBox = null;
     canvas.setPointerCapture?.(event.pointerId);
   });
   canvas.addEventListener("pointermove", (event) => {
+    if (event.pointerType === "touch" && reviewPointers.has(event.pointerId)) {
+      reviewPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+    if (reviewPanGesture?.touch && reviewPointers.size >= 2) {
+      const geometry = touchGeometry();
+      if (!geometry) return;
+      reviewZoom = Math.max(
+        0.5,
+        Math.min(8, reviewPanGesture.zoom * geometry.distance / reviewPanGesture.distance),
+      );
+      reviewPanX = reviewPanGesture.panX + geometry.centerX - reviewPanGesture.centerX;
+      reviewPanY = reviewPanGesture.panY + geometry.centerY - reviewPanGesture.centerY;
+      applyReviewView();
+      event.preventDefault();
+      return;
+    }
+    if (reviewPanGesture && !reviewPanGesture.touch
+      && reviewPanGesture.pointerId === event.pointerId) {
+      reviewPanX = reviewPanGesture.panX + event.clientX - reviewPanGesture.centerX;
+      reviewPanY = reviewPanGesture.panY + event.clientY - reviewPanGesture.centerY;
+      applyReviewView();
+      event.preventDefault();
+      return;
+    }
     if (!draftStart) return;
     const point = pointFromEvent(event);
     draftBox = {
@@ -3564,6 +4271,17 @@ async function openDetectorReviewEditor(annotation, card, cardStatus) {
     redraw();
   });
   canvas.addEventListener("pointerup", (event) => {
+    if (event.pointerType === "touch") {
+      reviewPointers.delete(event.pointerId);
+    }
+    if (reviewPanGesture) {
+      if (!reviewPanGesture.touch || reviewPointers.size < 2) {
+        reviewPanGesture = null;
+      }
+      canvas.releasePointerCapture?.(event.pointerId);
+      event.preventDefault();
+      return;
+    }
     if (!draftStart) return;
     const point = pointFromEvent(event);
     const candidate = draftBox;
@@ -3575,6 +4293,13 @@ async function openDetectorReviewEditor(annotation, card, cardStatus) {
     } else {
       toggleAtPoint(point);
     }
+    redraw();
+  });
+  canvas.addEventListener("pointercancel", (event) => {
+    reviewPointers.delete(event.pointerId);
+    reviewPanGesture = null;
+    draftStart = null;
+    draftBox = null;
     redraw();
   });
   approveButton.addEventListener("click", async () => {
@@ -3604,6 +4329,14 @@ async function openDetectorReviewEditor(annotation, card, cardStatus) {
     await image.decode();
     canvas.width = image.naturalWidth;
     canvas.height = image.naturalHeight;
+    fitReviewCanvasSize();
+    if (typeof ResizeObserver === "function") {
+      reviewResizeObserver = new ResizeObserver(() => {
+        fitReviewCanvasSize();
+        applyReviewView();
+      });
+      reviewResizeObserver.observe(canvasWrap);
+    }
     redraw();
   } catch (error) {
     editorStatus.textContent = error.message || "Review image could not be loaded.";
@@ -4031,9 +4764,15 @@ async function submitRecognitionFeedback(card, action) {
   feedbackStatus.textContent = action === "confirm" ? "Confirming..." : "Sending...";
 
   try {
+    const feedbackEventId = createDetectorAnnotationId();
+    if (action === "deny") {
+      card.denialFeedbackEventId = feedbackEventId;
+      card.deniedMatch = { ...best };
+    }
     await sendRecognitionFeedback(card, action, best, {
       confident: card.isConfident,
       contributor: contributorMode,
+      feedbackEventId,
     });
     card.feedbackSent = true;
     updateFeedbackActions(card);
@@ -4204,7 +4943,13 @@ async function saveConfirmedCorrectedReference(card) {
         rank_score: 1,
         source: "contributor_correction",
       },
-      { confident: true, contributor: true }
+      {
+        confident: true,
+        contributor: true,
+        feedbackEventId: createDetectorAnnotationId(),
+        correctionOfEventId: card.denialFeedbackEventId || "",
+        originalMatch: card.deniedMatch || card.matches[0] || null,
+      }
     );
 
     card.feedbackSent = true;
@@ -4261,7 +5006,18 @@ function handleCorrectionInputKeyDown(event, card) {
   submitCorrectedReference(event, card);
 }
 
-async function sendRecognitionFeedback(card, action, match, { confident = false, contributor = false } = {}) {
+async function sendRecognitionFeedback(
+  card,
+  action,
+  match,
+  {
+    confident = false,
+    contributor = false,
+    feedbackEventId = "",
+    correctionOfEventId = "",
+    originalMatch = null,
+  } = {},
+) {
   const blob = await canvasToBlob(card.cropCanvas);
   const formData = new FormData();
 
@@ -4274,6 +5030,18 @@ async function sendRecognitionFeedback(card, action, match, { confident = false,
   formData.append("source", match.source || "");
   formData.append("reference_image_path", match.reference_image_path || "");
   formData.append("confident", confident ? "true" : "false");
+  formData.append("feedback_event_id", feedbackEventId);
+  if (correctionOfEventId) {
+    formData.append("correction_of_event_id", correctionOfEventId);
+  }
+  if (originalMatch) {
+    formData.append("original_game_id", String(originalMatch.id));
+    formData.append("original_game_name", originalMatch.name || "");
+    formData.append("original_score", String(cleanNumber(
+      originalMatch.rank_score ?? originalMatch.score,
+    )));
+    formData.append("original_source", originalMatch.source || "");
+  }
 
   const headers = contributor
     ? { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword }
@@ -4349,6 +5117,13 @@ function toggleAdvancedFilters() {
   advancedFilterPanel.hidden = !open;
   advancedFilterToggle.setAttribute("aria-expanded", open ? "true" : "false");
   advancedFilterToggle.classList.toggle("isOpen", open);
+}
+
+function toggleFilterPanelVisibility() {
+  const open = !document.body.classList.contains("filterPanelOpen");
+  document.body.classList.toggle("filterPanelOpen", open);
+  filterVisibilityButton.textContent = open ? "Close filters" : "Filters";
+  filterVisibilityButton.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function handleFilterChange() {
@@ -4797,6 +5572,9 @@ function isConfidentMatch(matches) {
 }
 
 function formatMatchScoreText(match) {
+  if (match?.visual_score_available === false) {
+    return `Confidence ${matchSortScore(match).toFixed(SCORE_DISPLAY_DECIMALS)}`;
+  }
   const similarity = cleanNumber(match?.score);
   const confidence = matchSortScore(match);
   const roundedSimilarity = similarity.toFixed(SCORE_DISPLAY_DECIMALS);
@@ -4939,16 +5717,24 @@ function redrawActiveDetections() {
     clearSelectedMatchCard();
   }
 
-  const detections = manualDraftDetection
-    ? [...activeSourceCanvas.lastDetections, manualDraftDetection]
+  let detections = selectedBoxEdit
+    ? activeSourceCanvas.lastDetections.map((detection) => (
+        detection === selectedBoxEdit.original ? selectedBoxEdit.draft : detection
+      ))
     : activeSourceCanvas.lastDetections;
+  if (manualDraftDetection) {
+    detections = [...detections, manualDraftDetection];
+  }
   drawDetections(
     detections,
     activeSourceCanvas,
     activeDisplayElement,
-    manualBoxMode ? null : selectedMatchCard?.detection || null,
+    manualBoxMode
+      ? selectedBoxEdit?.draft || null
+      : selectedMatchCard?.detection || null,
     manualBoxMode ? "" : selectedMatchCard?.matches?.[0]?.name || ""
   );
+  positionBoxEditActions();
 }
 
 function drawDetections(detections, sourceCanvas, displayElement, selectedDetection = null, selectedLabel = "") {
@@ -5002,7 +5788,9 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     const y = detection.y * scale + offsetY;
     const width = detection.width * scale;
     const height = detection.height * scale;
-    const rawLabel = detection.manual
+    const rawLabel = detection.dino
+      ? `DINO ${detection.score.toFixed(2)}`
+      : detection.manual
       ? "Manual"
       : selected && selectedLabel
       ? `${selectedLabel} ${detection.score.toFixed(2)}`
@@ -5010,8 +5798,8 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     const boxGradient = ctx.createLinearGradient(x, y, x + width, y + height);
     const boxLineWidth = selected ? 5 : 3;
 
-    boxGradient.addColorStop(0, boxStart);
-    boxGradient.addColorStop(1, boxEnd);
+    boxGradient.addColorStop(0, detection.dino ? "#d946ef" : boxStart);
+    boxGradient.addColorStop(1, detection.dino ? "#f0abfc" : boxEnd);
 
     ctx.save();
     ctx.globalAlpha = dimUnselected ? 0.35 : 1;
@@ -5054,6 +5842,26 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     ctx.lineWidth = boxLineWidth;
     ctx.fillStyle = labelText;
     ctx.fillText(label, labelX + labelPaddingX, labelY + labelHeight / 2);
+
+    if (manualBoxMode && selected) {
+      const handleRadius = Math.max(7, Math.min(11, 9 / Math.sqrt(modifierZoom)));
+      const handles = [
+        [x, y], [x + width / 2, y], [x + width, y],
+        [x + width, y + height / 2], [x + width, y + height],
+        [x + width / 2, y + height], [x, y + height], [x, y + height / 2],
+      ];
+      ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+      ctx.shadowBlur = 5;
+      for (const [handleX, handleY] of handles) {
+        ctx.beginPath();
+        ctx.arc(handleX, handleY, handleRadius, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.strokeStyle = "#5d7cff";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+    }
     ctx.restore();
   }
 }
@@ -5144,6 +5952,8 @@ function clearResults(cancelActiveScan = true) {
   manualBoxMode = false;
   manualBoxGesture = null;
   manualDraftDetection = null;
+  selectedBoxEdit = null;
+  boxEditActions.hidden = true;
   resetModifierTouchGesture();
   modifierZoom = 1;
   modifierPanX = 0;
@@ -5196,10 +6006,20 @@ function setControlsEnabled(enabled) {
   const liveCamera = cameraReady && !frozenFrame;
   const imagePreviewActive = activeDisplayElement === photoPreview && !photoPreview.hidden;
   const canDrawMissedBox = Boolean(activeSourceCanvas && (frozenFrame || imagePreviewActive));
+  const imageModeActive = liveCamera || frozenFrame || imagePreviewActive;
 
   document.body.classList.toggle("cameraLive", liveCamera);
   document.body.classList.toggle("cameraFrozen", frozenFrame);
   document.body.classList.toggle("imagePreview", imagePreviewActive);
+  if (imageModeActive && !filterImageModeActive) {
+    document.body.classList.remove("filterPanelOpen");
+    filterVisibilityButton.textContent = "Filters";
+    filterVisibilityButton.setAttribute("aria-expanded", "false");
+  } else if (!imageModeActive) {
+    document.body.classList.remove("filterPanelOpen");
+  }
+  filterImageModeActive = imageModeActive;
+  filterVisibilityButton.hidden = !imageModeActive || manualBoxMode;
 
   startCameraButton.hidden = cameraReady || imagePreviewActive;
   uploadButton.hidden = false;
@@ -5212,6 +6032,12 @@ function setControlsEnabled(enabled) {
   exitModifierButton.hidden = !manualBoxMode;
   zoomOutButton.hidden = !manualBoxMode;
   zoomInButton.hidden = !manualBoxMode;
+  dinoSuggestButton.hidden = (
+    !manualBoxMode
+    || Boolean(activeSourceCanvas?.dinoSuggestionCompleted)
+    || Boolean(activeSourceCanvas?.dinoSuggestionDismissed)
+  );
+  dismissDinoSuggestButton.hidden = dinoSuggestButton.hidden;
   switchCameraButton.hidden = !cameraReady || frozenFrame;
 
   startCameraButton.disabled = !enabled || cameraReady || imagePreviewActive;
@@ -5228,6 +6054,11 @@ function setControlsEnabled(enabled) {
   exitModifierButton.disabled = !enabled || !manualBoxMode;
   zoomOutButton.disabled = !enabled || !manualBoxMode || modifierZoom <= 0.5;
   zoomInButton.disabled = !enabled || !manualBoxMode || modifierZoom >= 3;
+  dinoSuggestButton.disabled = (
+    !enabled
+    || !manualBoxMode
+    || Boolean(activeSourceCanvas?.dinoSuggestionCompleted)
+  );
   switchCameraButton.disabled = !enabled || !cameraReady || frozenFrame;
   playersFilter.disabled = !enabled;
   timeFilter.disabled = !enabled;
