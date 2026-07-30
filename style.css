@@ -99,6 +99,10 @@ select {
   background: var(--camera-bg);
 }
 
+#photoPreview {
+  object-fit: contain;
+}
+
 #camera[hidden],
 #photoPreview[hidden] {
   display: none;
@@ -110,6 +114,88 @@ select {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+body.manualBoxMode #boxes {
+  z-index: 2;
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+body.manualBoxMode #photoPreview {
+  transform: translateY(var(--modifier-pan-y, 0px)) scale(var(--modifier-zoom, 1));
+  transform-origin: center;
+}
+
+body.manualBoxMode #topBar,
+body.manualBoxMode #filterPanel,
+body.manualBoxMode #resultsPanel,
+body.manualBoxMode #showMatchesButton,
+body.manualBoxMode #examplePanel {
+  display: none;
+}
+
+body.manualBoxMode #controls {
+  left: 50%;
+  right: auto;
+  width: min(440px, calc(100vw - 24px));
+  grid-template-columns: 58px minmax(0, 1fr) 58px;
+  transform: translateX(-50%);
+}
+
+body.manualBoxMode #controls button {
+  display: none;
+}
+
+body.manualBoxMode #zoomOutButton,
+body.manualBoxMode #finishModifyingButton,
+body.manualBoxMode #zoomInButton {
+  display: block;
+  min-height: 54px;
+}
+
+body.manualBoxMode #zoomOutButton {
+  grid-column: 1;
+}
+
+body.manualBoxMode #finishModifyingButton {
+  grid-column: 2;
+}
+
+body.manualBoxMode #zoomInButton {
+  grid-column: 3;
+}
+
+body.manualBoxMode #zoomOutButton,
+body.manualBoxMode #zoomInButton {
+  padding: 8px;
+  font-size: 28px;
+  line-height: 1;
+}
+
+#exitModifierButton {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  right: 12px;
+  z-index: 6;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--panel-border);
+  border-radius: 50%;
+  background: var(--panel-bg-strong);
+  color: var(--app-text-strong);
+  box-shadow: var(--panel-shadow);
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#exitModifierButton[hidden] {
+  display: none;
 }
 
 #topBar {
@@ -342,7 +428,7 @@ body.contributorMode #infoButton {
 
 #contributorTabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--panel-border);
@@ -453,19 +539,22 @@ body.contributorMode #infoButton {
   gap: 10px;
 }
 
-#contributorReviewHeader {
+#contributorReviewHeader,
+#detectorReviewHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-#contributorReviewHeader > div {
+#contributorReviewHeader > div,
+#detectorReviewHeader > div {
   display: grid;
   gap: 3px;
 }
 
-#contributorReviewHeader strong {
+#contributorReviewHeader strong,
+#detectorReviewHeader strong {
   color: var(--app-text-strong);
   font-size: 14px;
   line-height: 1;
@@ -500,6 +589,7 @@ body.contributorMode #infoButton {
 }
 
 .contributorReviewCard {
+  position: relative;
   display: grid;
   grid-template-columns: 98px minmax(0, 1fr);
   gap: 10px;
@@ -769,7 +859,40 @@ body.cameraLive #controls {
 
 body.cameraFrozen #controls,
 body.imagePreview #controls {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.detectorReviewActions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#detectorReviewPanel {
+  display: grid;
+  gap: 10px;
+}
+
+#detectorReviewPanel[hidden] {
+  display: none;
+}
+
+#startDetectorTrainingButton {
+  min-height: 46px;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, transparent);
+  border-radius: 8px;
+  background: var(--primary-gradient);
+  color: #fffaf2;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+#startDetectorTrainingButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#detectorReviewGrid {
+  display: grid;
+  gap: 9px;
 }
 
 #controls button {
@@ -832,9 +955,14 @@ body.imagePreview #closeScanButton {
   grid-column: 1;
 }
 
+#modifyBoxesButton,
+#finishModifyingButton {
+  grid-column: 2;
+}
+
 body.cameraFrozen #uploadButton,
 body.imagePreview #uploadButton {
-  grid-column: 2;
+  grid-column: 3;
   min-height: 58px;
 }
 
@@ -1296,6 +1424,59 @@ body.imagePreview #uploadButton {
   font-weight: 750;
 }
 
+#modifyBoxesButton,
+#finishModifyingButton {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--button-bg));
+}
+
+#finishModifyingButton {
+  background: var(--primary-gradient);
+  color: #fffaf2;
+}
+
+.contributorReviewActions .contributorReviewUndo {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--accent-strong);
+}
+
+.contributorReviewDismiss {
+  position: absolute;
+  z-index: 2;
+  top: 5px;
+  right: 5px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  color: var(--app-text-strong);
+  background: color-mix(in srgb, var(--panel-bg-strong) 88%, transparent);
+  cursor: pointer;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.contributorReviewDismiss:hover,
+.contributorReviewDismiss:focus-visible {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.matchDiagnostic,
+.paligemmaHint {
+  display: none;
+  margin-top: 0.3rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+
+body.contributorMode .matchDiagnostic,
+body.contributorMode .paligemmaHint:not([hidden]) {
+  display: block;
+}
+
 .filterFit {
   width: fit-content;
   max-width: 100%;
@@ -1370,6 +1551,29 @@ body.imagePreview #uploadButton {
   font-size: 12px;
   font-weight: 760;
   text-decoration: none;
+}
+
+.findGameButton {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  border-radius: 8px;
+  color: var(--app-text-strong);
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel-bg-strong));
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.findGameButton:hover,
+.findGameButton:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel-bg-strong));
+}
+
+.findGameButton:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .feedbackActions {
@@ -1472,6 +1676,69 @@ body.contributorMode .correctionPanel.isOpen {
   display: none;
 }
 
+.correctionCoverPanel {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-bg-strong));
+}
+
+.correctionCoverPanel[hidden] {
+  display: none;
+}
+
+.correctionCoverImage {
+  grid-row: 1 / span 2;
+  width: 92px;
+  height: 92px;
+  border-radius: 6px;
+  background: var(--app-bg);
+  object-fit: contain;
+}
+
+.correctionCoverName {
+  color: var(--app-text-strong);
+  font-size: 15px;
+  line-height: 1.15;
+}
+
+.correctionCoverQuestion {
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.correctionCoverActions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.correctionCoverActions button {
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--app-text-strong);
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.correctionCoverActions button:first-child {
+  border-color: color-mix(in srgb, var(--success) 48%, transparent);
+  background: color-mix(in srgb, var(--success) 18%, var(--panel-bg));
+}
+
+.correctionCoverActions button:last-child {
+  background: var(--button-bg);
+}
+
 .correctionSuggestion {
   display: grid;
   gap: 3px;
@@ -1560,6 +1827,33 @@ body.contributorMode .correctionPanel.isOpen {
   border-color: color-mix(in srgb, var(--danger) 72%, transparent);
 }
 
+@media (max-height: 520px) and (min-width: 681px) {
+  body.cameraFrozen #controls,
+  body.imagePreview #controls {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  body.cameraFrozen #backToCameraButton,
+  body.imagePreview #closeScanButton,
+  #modifyBoxesButton,
+  #finishModifyingButton,
+  body.cameraFrozen #uploadButton,
+  body.imagePreview #uploadButton {
+    grid-column: auto;
+    min-height: 48px;
+  }
+
+  #showMatchesButton {
+    bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+  #resultsPanel {
+    top: 10px;
+    bottom: calc(70px + env(safe-area-inset-bottom));
+    max-height: none;
+  }
+}
+
 @media (max-width: 680px) {
   #topBar h1 {
     font-size: 20px;
@@ -1642,7 +1936,7 @@ body.contributorMode .correctionPanel.isOpen {
 
   body.cameraFrozen #controls,
   body.imagePreview #controls {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   #controls button {
@@ -1687,14 +1981,14 @@ body.contributorMode .correctionPanel.isOpen {
     left: 10px;
     right: 10px;
     top: auto;
-    bottom: calc(128px + env(safe-area-inset-bottom));
+    bottom: calc(80px + env(safe-area-inset-bottom));
     width: auto;
     max-height: min(48vh, 430px);
   }
 
   #showMatchesButton {
     right: 10px;
-    bottom: calc(132px + env(safe-area-inset-bottom));
+    bottom: calc(84px + env(safe-area-inset-bottom));
   }
 
   .matchCard {
@@ -1702,7 +1996,9 @@ body.contributorMode .correctionPanel.isOpen {
   }
 
   .cardDismissButton {
-    display: none;
+    display: grid;
+    top: 5px;
+    right: 5px;
   }
 
   .cropViewerOverlay {

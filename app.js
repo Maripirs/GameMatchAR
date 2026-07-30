@@ -39,11 +39,16 @@ const video = document.getElementById("camera");
 const photoPreview = document.getElementById("photoPreview");
 const captureCanvas = document.getElementById("capture");
 const boxesCanvas = document.getElementById("boxes");
+const exitModifierButton = document.getElementById("exitModifierButton");
 const statusText = document.getElementById("status");
 const startCameraButton = document.getElementById("startCameraButton");
 const scanButton = document.getElementById("scanButton");
 const backToCameraButton = document.getElementById("backToCameraButton");
 const closeScanButton = document.getElementById("closeScanButton");
+const modifyBoxesButton = document.getElementById("modifyBoxesButton");
+const zoomOutButton = document.getElementById("zoomOutButton");
+const finishModifyingButton = document.getElementById("finishModifyingButton");
+const zoomInButton = document.getElementById("zoomInButton");
 const switchCameraButton = document.getElementById("switchCameraButton");
 const uploadButton = document.getElementById("uploadButton");
 const imageUpload = document.getElementById("imageUpload");
@@ -85,6 +90,13 @@ const contributorReviewRefreshButton = document.getElementById("contributorRevie
 const contributorReviewStatus = document.getElementById("contributorReviewStatus");
 const contributorReviewCount = document.getElementById("contributorReviewCount");
 const contributorReviewGrid = document.getElementById("contributorReviewGrid");
+const detectorReviewPanel = document.getElementById("detectorReviewPanel");
+const detectorReviewRefreshButton = document.getElementById("detectorReviewRefreshButton");
+const detectorReviewStatus = document.getElementById("detectorReviewStatus");
+const detectorReviewCount = document.getElementById("detectorReviewCount");
+const detectorReviewGrid = document.getElementById("detectorReviewGrid");
+const detectorTrainingStatus = document.getElementById("detectorTrainingStatus");
+const startDetectorTrainingButton = document.getElementById("startDetectorTrainingButton");
 const themeColorMeta = document.querySelector('meta[name="theme-color"]');
 const systemLightThemeQuery = window.matchMedia?.("(prefers-color-scheme: light)");
 const cropHoverPreviewQuery = window.matchMedia?.("(hover: hover) and (pointer: fine)");
@@ -118,10 +130,18 @@ let contributorApiBase = configuredApiBase();
 let contributorActiveTab = "mode";
 let contributorReviewLoadPromise = null;
 let contributorReviewImageUrls = [];
+let detectorReviewLoadPromise = null;
+let detectorReviewImageUrls = [];
 let themePreference = "auto";
 let cropZoomPreview = null;
 let cropViewer = null;
 let cropViewerState = null;
+let manualBoxMode = false;
+let manualBoxGesture = null;
+let manualDraftDetection = null;
+let modifierZoom = 1;
+let modifierPanY = 0;
+let modifierGestureStartZoom = 1;
 
 initThemeControl();
 setControlsEnabled(false);
@@ -134,6 +154,11 @@ startCameraButton.addEventListener("click", startCameraFromTap);
 scanButton.addEventListener("click", scanCurrentView);
 backToCameraButton.addEventListener("click", backToLiveCamera);
 closeScanButton.addEventListener("click", closeActiveScan);
+modifyBoxesButton.addEventListener("click", beginManualBoxMode);
+finishModifyingButton.addEventListener("click", endManualBoxMode);
+exitModifierButton.addEventListener("click", endManualBoxMode);
+zoomOutButton.addEventListener("click", () => changeModifierZoom(-0.25));
+zoomInButton.addEventListener("click", () => changeModifierZoom(0.25));
 switchCameraButton.addEventListener("click", switchCameraFromTap);
 uploadButton.addEventListener("click", () => imageUpload.click());
 imageUpload.addEventListener("change", handleImageUpload);
@@ -156,6 +181,8 @@ for (const button of contributorTabButtons) {
   button.addEventListener("click", () => selectContributorTab(button.dataset.contributorTab));
 }
 contributorReviewRefreshButton.addEventListener("click", () => loadContributorReview({ force: true }));
+detectorReviewRefreshButton.addEventListener("click", () => loadDetectorReview({ force: true }));
+startDetectorTrainingButton.addEventListener("click", startDetectorTraining);
 [playersFilter, timeFilter, complexityFilter, minRatingFilter, maxRankFilter, gameTypeFilter, expansionFilter, minYearFilter].forEach((control) => {
   control.addEventListener("input", handleFilterChange);
   control.addEventListener("change", handleFilterChange);
@@ -164,7 +191,20 @@ window.addEventListener("resize", () => {
   hideCropZoomPreview();
   redrawActiveDetections();
 });
+boxesCanvas.addEventListener("pointerdown", startManualBox);
+boxesCanvas.addEventListener("pointermove", moveManualBox);
+boxesCanvas.addEventListener("pointerup", finishManualBox);
+boxesCanvas.addEventListener("pointercancel", cancelManualBox);
+document.addEventListener("wheel", scrollModifierImage, { passive: false });
+document.addEventListener("gesturestart", startModifierPinch, { passive: false });
+document.addEventListener("gesturechange", changeModifierPinch, { passive: false });
+document.addEventListener("gestureend", endModifierPinch, { passive: false });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && manualBoxMode) {
+    event.preventDefault();
+    endManualBoxMode();
+    return;
+  }
   if (event.key === "Escape" && isCropViewerOpen()) {
     event.preventDefault();
     event.stopPropagation();
@@ -375,6 +415,12 @@ async function processImageCanvas(sourceCanvas, displayElement) {
     const confident = allConfident.slice(0, MAX_CROPS_PER_SCAN);
 
     sourceCanvas.lastDetections = confident;
+    sourceCanvas.detectorDetections = [...detections];
+    sourceCanvas.manualDetections = [];
+    sourceCanvas.removedDetectorDetections = [];
+    sourceCanvas.detectorAnnotationId = createDetectorAnnotationId();
+    sourceCanvas.detectorAnnotationSavePromise = Promise.resolve();
+    sourceCanvas.detectorAnnotationSaved = false;
     drawDetections(confident, sourceCanvas, displayElement);
 
     if (!confident.length) {
@@ -488,6 +534,427 @@ async function processImageCanvas(sourceCanvas, displayElement) {
   }
 }
 
+function beginManualBoxMode() {
+  if (!activeSourceCanvas || !activeDisplayElement) {
+    return;
+  }
+
+  manualBoxMode = true;
+  manualBoxGesture = null;
+  manualDraftDetection = null;
+  modifierZoom = 1;
+  modifierPanY = 0;
+  document.body.classList.add("manualBoxMode");
+  applyModifierZoom();
+  setControlsEnabled(true);
+  hideResultsPanel();
+  setStatus("Drag to add a missed box, or tap an existing box to remove it.");
+}
+
+function endManualBoxMode() {
+  manualBoxMode = false;
+  manualBoxGesture = null;
+  manualDraftDetection = null;
+  modifierZoom = 1;
+  modifierPanY = 0;
+  document.body.classList.remove("manualBoxMode");
+  applyModifierZoom();
+  setControlsEnabled(true);
+  redrawActiveDetections();
+  setStatus("Finished modifying boxes.");
+}
+
+function manualBoxSourcePoint(event) {
+  if (!activeSourceCanvas || !activeDisplayElement) {
+    return null;
+  }
+
+  const rect = boxesCanvas.getBoundingClientRect();
+  const displayWidth = rect.width;
+  const displayHeight = rect.height;
+  const sourceWidth = activeSourceCanvas.width;
+  const sourceHeight = activeSourceCanvas.height;
+  const scale = Math.min(displayWidth / sourceWidth, displayHeight / sourceHeight) * modifierZoom;
+  const offsetX = (displayWidth - sourceWidth * scale) / 2;
+  const offsetY = (displayHeight - sourceHeight * scale) / 2 + modifierPanY;
+  const sourceX = (event.clientX - rect.left - offsetX) / scale;
+  const sourceY = (event.clientY - rect.top - offsetY) / scale;
+  if (sourceX < 0 || sourceX > sourceWidth || sourceY < 0 || sourceY > sourceHeight) {
+    return null;
+  }
+  return {
+    x: sourceX,
+    y: sourceY,
+  };
+}
+
+function changeModifierZoom(delta) {
+  if (!manualBoxMode) {
+    return;
+  }
+  modifierZoom = Math.max(0.5, Math.min(3, modifierZoom + delta));
+  modifierPanY = clampModifierPanY(modifierPanY);
+  applyModifierZoom();
+  redrawActiveDetections();
+  setStatus(`Detection modifier zoom: ${Math.round(modifierZoom * 100)}%.`);
+}
+
+function scrollModifierImage(event) {
+  if (!manualBoxMode) {
+    return;
+  }
+  if (event.ctrlKey) {
+    const zoomDirection = event.deltaY < 0 ? 0.25 : -0.25;
+    changeModifierZoom(zoomDirection);
+    event.preventDefault();
+    return;
+  }
+  if (modifierZoom <= 1) {
+    event.preventDefault();
+    return;
+  }
+  modifierPanY = clampModifierPanY(modifierPanY - event.deltaY);
+  applyModifierZoom();
+  redrawActiveDetections();
+  event.preventDefault();
+}
+
+function startModifierPinch(event) {
+  if (!manualBoxMode) {
+    return;
+  }
+  modifierGestureStartZoom = modifierZoom;
+  event.preventDefault();
+}
+
+function changeModifierPinch(event) {
+  if (!manualBoxMode) {
+    return;
+  }
+  modifierZoom = Math.max(0.5, Math.min(3, modifierGestureStartZoom * event.scale));
+  modifierPanY = clampModifierPanY(modifierPanY);
+  applyModifierZoom();
+  redrawActiveDetections();
+  event.preventDefault();
+}
+
+function endModifierPinch(event) {
+  if (manualBoxMode) {
+    event.preventDefault();
+  }
+}
+
+function clampModifierPanY(value) {
+  if (!manualBoxMode || modifierZoom <= 1 || !activeSourceCanvas) {
+    return 0;
+  }
+  const rect = boxesCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return 0;
+  }
+  const baseScale = Math.min(
+    rect.width / activeSourceCanvas.width,
+    rect.height / activeSourceCanvas.height,
+  );
+  const zoomedHeight = activeSourceCanvas.height * baseScale * modifierZoom;
+  const limit = Math.max(0, (zoomedHeight - rect.height) / 2);
+  return Math.max(-limit, Math.min(limit, value));
+}
+
+function applyModifierZoom() {
+  document.documentElement.style.setProperty("--modifier-zoom", String(modifierZoom));
+  document.documentElement.style.setProperty("--modifier-pan-y", `${modifierPanY}px`);
+  zoomOutButton.disabled = !manualBoxMode || modifierZoom <= 0.5;
+  zoomInButton.disabled = !manualBoxMode || modifierZoom >= 3;
+}
+
+function startManualBox(event) {
+  if (!manualBoxMode || !activeSourceCanvas) {
+    return;
+  }
+
+  const point = manualBoxSourcePoint(event);
+  if (!point) {
+    return;
+  }
+
+  manualBoxGesture = {
+    pointerId: event.pointerId,
+    startX: point.x,
+    startY: point.y,
+    hitDetection: findDetectionAtPoint(activeSourceCanvas.lastDetections, point),
+  };
+  boxesCanvas.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function moveManualBox(event) {
+  if (!manualBoxGesture || manualBoxGesture.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const point = manualBoxSourcePoint(event);
+  if (!point) {
+    return;
+  }
+
+  manualDraftDetection = rectangleFromPoints(
+    manualBoxGesture.startX,
+    manualBoxGesture.startY,
+    point.x,
+    point.y,
+  );
+  redrawActiveDetections();
+  event.preventDefault();
+}
+
+function finishManualBox(event) {
+  if (!manualBoxGesture || manualBoxGesture.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const gesture = manualBoxGesture;
+  const point = manualBoxSourcePoint(event);
+  const detection = point
+    ? rectangleFromPoints(
+        gesture.startX,
+        gesture.startY,
+        point.x,
+        point.y,
+      )
+    : null;
+  boxesCanvas.releasePointerCapture?.(event.pointerId);
+  manualBoxGesture = null;
+  manualDraftDetection = null;
+
+  if (
+    gesture.hitDetection
+    && (!detection || (detection.width < 16 && detection.height < 16))
+  ) {
+    removeDetection(gesture.hitDetection);
+    event.preventDefault();
+    return;
+  }
+
+  if (!detection || detection.width < 16 || detection.height < 16) {
+    redrawActiveDetections();
+    setStatus("Drag a larger rectangle to add a box, or tap an existing box to remove it.");
+    return;
+  }
+
+  addManualDetection(detection);
+  event.preventDefault();
+}
+
+function cancelManualBox(event) {
+  if (!manualBoxGesture || manualBoxGesture.pointerId !== event.pointerId) {
+    return;
+  }
+
+  boxesCanvas.releasePointerCapture?.(event.pointerId);
+  manualBoxGesture = null;
+  manualDraftDetection = null;
+  redrawActiveDetections();
+}
+
+function rectangleFromPoints(startX, startY, endX, endY) {
+  return {
+    x: Math.min(startX, endX),
+    y: Math.min(startY, endY),
+    width: Math.abs(endX - startX),
+    height: Math.abs(endY - startY),
+    score: 1,
+    manual: true,
+  };
+}
+
+function findDetectionAtPoint(detections, point) {
+  return [...(detections || [])].reverse().find((detection) => (
+    point.x >= detection.x
+    && point.x <= detection.x + detection.width
+    && point.y >= detection.y
+    && point.y <= detection.y + detection.height
+  )) || null;
+}
+
+function removeDetection(detection) {
+  const sourceCanvas = activeSourceCanvas;
+  if (!sourceCanvas || !detection) {
+    return;
+  }
+
+  sourceCanvas.lastDetections = (sourceCanvas.lastDetections || [])
+    .filter((candidate) => candidate !== detection);
+  if (detection.manual) {
+    sourceCanvas.manualDetections = (sourceCanvas.manualDetections || [])
+      .filter((candidate) => candidate !== detection);
+  } else if (!(sourceCanvas.removedDetectorDetections || []).includes(detection)) {
+    sourceCanvas.removedDetectorDetections = [
+      ...(sourceCanvas.removedDetectorDetections || []),
+      detection,
+    ];
+  }
+
+  const removedCard = currentResultCards.find((cardApi) => cardApi.detection === detection);
+  if (removedCard) {
+    removedCard.dismissed = true;
+    removedCard.card.remove();
+    currentResultCards = currentResultCards.filter((cardApi) => cardApi !== removedCard);
+    if (selectedMatchCard === removedCard) {
+      clearSelectedMatchCard();
+    }
+  }
+
+  redrawActiveDetections();
+  if (currentResultCards.length) {
+    updateResultStats();
+    sortCards();
+  } else {
+    resultsPanel.hidden = true;
+    showMatchesButton.hidden = true;
+    resultCount.textContent = "";
+  }
+
+  if (contributorMode) {
+    queueContributorDetectorAnnotationSave(sourceCanvas).catch((error) => {
+      console.warn("Could not save detector annotation:", error);
+      setStatus("Box removed, but the detector correction could not be saved.");
+    });
+  }
+  setStatus(detection.manual ? "Removed the manually added box." : "Removed the incorrect detector box.");
+}
+
+async function addManualDetection(detection) {
+  const sourceCanvas = activeSourceCanvas;
+  if (!sourceCanvas) {
+    return;
+  }
+
+  sourceCanvas.lastDetections = [...(sourceCanvas.lastDetections || []), detection];
+  sourceCanvas.manualDetections = [...(sourceCanvas.manualDetections || []), detection];
+  redrawActiveDetections();
+
+  const cropCanvas = cropDetection(sourceCanvas, detection);
+  const card = createMatchCard(cropCanvas, detection, currentResultCards.length);
+  currentResultCards.push(card);
+  showResultShell(currentResultCards.length);
+  updateResultStats();
+  hideResultsPanel();
+  setStatus("Matching the manually added box...");
+
+  if (contributorMode) {
+    queueContributorDetectorAnnotationSave(sourceCanvas).catch((error) => {
+      console.warn("Could not save detector annotation:", error);
+      setStatus("Box added, but the detector annotation could not be saved.");
+    });
+  }
+
+  try {
+    await ensureBackendMatcherReady({ force: true });
+    const matches = await matchCrop(card.cropCanvas, (text) => card.setPending(text));
+    await Promise.all([
+      ensureGameDetailsLoaded(),
+      ensurePlayerExpansionIndexLoaded(),
+    ]);
+    card.setMatches(matches);
+    if (card.isConfident && !card.details) {
+      await card.resolveDetails();
+    }
+    setStatus("Manual box added and matched.");
+  } catch (error) {
+    console.warn("Manual box match failed:", error);
+    card.setError("Match failed", {
+      meta: "Manual box saved",
+      fitText: "Try again",
+      detailsText: "The rectangle was added, but this crop could not be matched.",
+    });
+  }
+
+  updateResultStats();
+  sortCards();
+}
+
+function normalizedDetectorBoxes(sourceCanvas, detections) {
+  return (detections || []).map((detection) => ({
+    x: detection.x / sourceCanvas.width,
+    y: detection.y / sourceCanvas.height,
+    width: detection.width / sourceCanvas.width,
+    height: detection.height / sourceCanvas.height,
+    score: Number.isFinite(detection.score) ? detection.score : null,
+  }));
+}
+
+function queueContributorDetectorAnnotationSave(sourceCanvas) {
+  const previousSave = sourceCanvas.detectorAnnotationSavePromise || Promise.resolve();
+  const nextSave = previousSave
+    .catch(() => {})
+    .then(() => saveContributorDetectorAnnotation(sourceCanvas));
+  sourceCanvas.detectorAnnotationSavePromise = nextSave;
+  return nextSave;
+}
+
+async function saveContributorDetectorAnnotation(sourceCanvas) {
+  const hasCorrections = (
+    sourceCanvas.manualDetections?.length
+    || sourceCanvas.removedDetectorDetections?.length
+  );
+  if (
+    !contributorMode
+    || !contributorPassword
+    || (!hasCorrections && !sourceCanvas.detectorAnnotationSaved)
+  ) {
+    return;
+  }
+
+  const blob = await canvasToBlob(sourceCanvas);
+  const formData = new FormData();
+  formData.append("file", blob, "detector-source.jpg");
+  formData.append(
+    "annotation_id",
+    sourceCanvas.detectorAnnotationId || createDetectorAnnotationId(),
+  );
+  formData.append(
+    "manual_boxes",
+    JSON.stringify(normalizedDetectorBoxes(sourceCanvas, sourceCanvas.manualDetections)),
+  );
+  formData.append(
+    "detector_boxes",
+    JSON.stringify(normalizedDetectorBoxes(sourceCanvas, sourceCanvas.detectorDetections)),
+  );
+  formData.append(
+    "accepted_boxes",
+    JSON.stringify(normalizedDetectorBoxes(sourceCanvas, sourceCanvas.lastDetections)),
+  );
+  formData.append(
+    "removed_boxes",
+    JSON.stringify(normalizedDetectorBoxes(sourceCanvas, sourceCanvas.removedDetectorDetections)),
+  );
+
+  const response = await fetch(apiUrl("/contributor/detector-annotation", contributorApiBase), {
+    method: "POST",
+    headers: {
+      [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword,
+    },
+    body: formData,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.ok) {
+    throw new Error(result.detail || `Annotation save failed: ${response.status}`);
+  }
+  sourceCanvas.detectorAnnotationSaved = hasCorrections;
+  setStatus(
+    `Saved ${result.manual_boxes} added and ${result.removed_boxes} removed detector correction`
+    + `${result.manual_boxes + result.removed_boxes === 1 ? "" : "s"}.`,
+  );
+}
+
+function createDetectorAnnotationId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `scan-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function ensureDetectorLoaded() {
   if (!detectorLoadPromise) {
     detectorLoadPromise = detector.load().catch((error) => {
@@ -568,6 +1035,12 @@ async function matchCropWithBackend(cropCanvas) {
     shape_penalized: Boolean(match.shape_penalized),
     noisy_penalized: Boolean(match.noisy_penalized),
     feedback_adjustment: cleanNumber(match.feedback_adjustment),
+    paligemma_adjustment: cleanNumber(match.paligemma_adjustment),
+    paligemma_image_score: cleanNumber(match.paligemma_image_score),
+    paligemma_image_rank_score: cleanNumber(match.paligemma_image_rank_score),
+    paligemma_used: Boolean(result.paligemma_used),
+    paligemma_text: result.paligemma_text || "",
+    paligemma_candidates: result.paligemma_candidates || [],
     reference_image_path: match.reference_image_path || "",
     matcher: "backend",
   }));
@@ -628,9 +1101,12 @@ function createMatchCard(cropCanvas, detection, index) {
   const body = document.createElement("div");
   const name = document.createElement("div");
   const meta = document.createElement("div");
+  const matchDiagnostic = document.createElement("div");
   const score = document.createElement("div");
+  const paligemmaHint = document.createElement("div");
   const fit = document.createElement("div");
   const details = document.createElement("div");
+  const findGameButton = document.createElement("button");
   const feedbackActions = document.createElement("div");
   const confirmButton = document.createElement("button");
   const denyButton = document.createElement("button");
@@ -640,6 +1116,13 @@ function createMatchCard(cropCanvas, detection, index) {
   const correctionLabelText = document.createElement("span");
   const correctionInput = document.createElement("input");
   const correctionSuggestions = document.createElement("div");
+  const correctionCoverPanel = document.createElement("div");
+  const correctionCoverImage = document.createElement("img");
+  const correctionCoverName = document.createElement("strong");
+  const correctionCoverQuestion = document.createElement("span");
+  const correctionCoverActions = document.createElement("div");
+  const correctionCoverConfirmButton = document.createElement("button");
+  const correctionCoverBackButton = document.createElement("button");
   const correctionActions = document.createElement("div");
   const correctionSaveButton = document.createElement("button");
   const correctionCancelButton = document.createElement("button");
@@ -652,15 +1135,24 @@ function createMatchCard(cropCanvas, detection, index) {
   body.className = "matchBody";
   name.className = "matchName";
   meta.className = "matchMeta";
+  matchDiagnostic.className = "matchDiagnostic";
   score.className = "matchScore";
+  paligemmaHint.className = "paligemmaHint";
+  paligemmaHint.hidden = true;
   fit.className = "filterFit";
   details.className = "gameDetails";
+  findGameButton.className = "findGameButton";
   feedbackActions.className = "feedbackActions";
   confirmButton.className = "feedbackConfirmButton";
   denyButton.className = "feedbackDenyButton";
   feedbackStatus.className = "feedbackStatus";
   correctionPanel.className = "correctionPanel";
   correctionSuggestions.className = "correctionSuggestions";
+  correctionCoverPanel.className = "correctionCoverPanel";
+  correctionCoverImage.className = "correctionCoverImage";
+  correctionCoverName.className = "correctionCoverName";
+  correctionCoverQuestion.className = "correctionCoverQuestion";
+  correctionCoverActions.className = "correctionCoverActions";
   correctionActions.className = "correctionActions";
   correctionSaveButton.className = "correctionSaveButton";
   correctionCancelButton.className = "correctionCancelButton";
@@ -683,20 +1175,43 @@ function createMatchCard(cropCanvas, detection, index) {
   correctionInput.autocomplete = "off";
   correctionInput.placeholder = "Name, BGG URL, or BGG ID";
   correctionSaveButton.type = "submit";
+  correctionCoverConfirmButton.type = "button";
+  correctionCoverBackButton.type = "button";
   correctionCancelButton.type = "button";
-  correctionSaveButton.textContent = "Save correct";
+  correctionSaveButton.textContent = "Check cover";
+  correctionCoverConfirmButton.textContent = "Yes, same game";
+  correctionCoverBackButton.textContent = "Choose another";
   correctionCancelButton.textContent = "Skip";
   confirmButton.setAttribute("aria-label", "Confirm recognition");
   denyButton.setAttribute("aria-label", "Deny recognition");
   feedbackStatus.textContent = "Waiting for match";
+  findGameButton.type = "button";
+  findGameButton.textContent = "Show in picture";
+  findGameButton.setAttribute("aria-label", "Show this game in the scanned picture");
+  findGameButton.title = "Highlight this game's box in the picture";
+  findGameButton.disabled = true;
   correctionPanel.hidden = true;
+  correctionCoverPanel.hidden = true;
   correctionStatus.textContent = "";
 
   correctionLabel.append(correctionLabelText, correctionInput);
+  correctionCoverActions.append(correctionCoverConfirmButton, correctionCoverBackButton);
+  correctionCoverPanel.append(
+    correctionCoverImage,
+    correctionCoverName,
+    correctionCoverQuestion,
+    correctionCoverActions,
+  );
   correctionActions.append(correctionSaveButton, correctionCancelButton);
-  correctionPanel.append(correctionLabel, correctionSuggestions, correctionActions, correctionStatus);
+  correctionPanel.append(
+    correctionLabel,
+    correctionSuggestions,
+    correctionCoverPanel,
+    correctionActions,
+    correctionStatus,
+  );
   feedbackActions.append(confirmButton, denyButton, feedbackStatus);
-  body.append(name, meta, score, fit, details, feedbackActions, correctionPanel);
+  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, findGameButton, feedbackActions, correctionPanel);
   card.append(dismissButton, cropCanvas, body);
   card.tabIndex = 0;
   card.setAttribute("aria-label", `Highlight box ${index + 1} in the photo`);
@@ -714,13 +1229,22 @@ function createMatchCard(cropCanvas, detection, index) {
     userConfirmed: false,
     matchFailed: false,
     dismissed: false,
+    correctionSelectedGame: null,
     feedbackControls: {
       confirmButton,
       denyButton,
       feedbackStatus,
       correctionPanel,
+      correctionLabel,
       correctionInput,
       correctionSuggestions,
+      correctionCoverPanel,
+      correctionCoverImage,
+      correctionCoverName,
+      correctionCoverQuestion,
+      correctionCoverConfirmButton,
+      correctionCoverBackButton,
+      correctionActions,
       correctionSaveButton,
       correctionCancelButton,
       correctionStatus,
@@ -744,8 +1268,12 @@ function createMatchCard(cropCanvas, detection, index) {
 
       if (!best) {
         name.textContent = "No match";
+        meta.textContent = "";
+        matchDiagnostic.textContent = "";
         score.textContent = "";
+        paligemmaHint.hidden = true;
         details.replaceChildren();
+        findGameButton.disabled = true;
         card.dataset.score = "-1";
         updateFeedbackActions(this);
         this.applyFilters();
@@ -754,9 +1282,15 @@ function createMatchCard(cropCanvas, detection, index) {
       }
 
       name.textContent = best.name;
-      meta.textContent = `BGG ${best.id} · ${formatMatchSource(best)}`;
+      meta.textContent = `BGG ${best.id}`;
+      matchDiagnostic.textContent = `Match source: ${formatMatchSource(best)}`;
       score.textContent = formatMatchScoreText(best);
+      paligemmaHint.textContent = best.paligemma_text
+        ? `PaLIGemma sees: ${best.paligemma_text}`
+        : "";
+      paligemmaHint.hidden = !best.paligemma_text;
       card.dataset.score = String(matchSortScore(best));
+      findGameButton.disabled = false;
       renderGameDetails(details, matches, {
         force: this.isConfident,
         detailsRecord: this.details,
@@ -781,6 +1315,7 @@ function createMatchCard(cropCanvas, detection, index) {
       this.details = gameDetailsById.get(Number(game.id)) || null;
       name.textContent = game.name;
       meta.textContent = `BGG ${game.id} · corrected`;
+      matchDiagnostic.textContent = "Match source: contributor correction";
       score.textContent = "Saved as correct";
       card.dataset.score = "1";
       renderGameDetails(details, this.matches, {
@@ -852,6 +1387,7 @@ function createMatchCard(cropCanvas, detection, index) {
       fit.textContent = options.fitText || "Try again";
       details.className = "gameDetails muted";
       details.textContent = options.detailsText || "Start the backend and scan again.";
+      findGameButton.disabled = true;
       card.dataset.score = "-1";
       card.dataset.fit = "0";
       card.classList.remove("recommended", "conditional", "rejected");
@@ -893,15 +1429,24 @@ function createMatchCard(cropCanvas, detection, index) {
   confirmButton.addEventListener("click", () => submitRecognitionFeedback(cardApi, "confirm"));
   denyButton.addEventListener("click", () => submitRecognitionFeedback(cardApi, "deny"));
   dismissButton.addEventListener("click", () => dismissMatchCard(cardApi, 1));
+  findGameButton.addEventListener("click", () => {
+    selectMatchCard(cardApi);
+    hideResultsPanel();
+  });
   enableCropHoverPreview(cropCanvas);
   cropCanvas.addEventListener("click", () => {
     selectMatchCard(cardApi);
     openCropViewer(cropCanvas, name.textContent);
   });
   correctionPanel.addEventListener("submit", (event) => submitCorrectedReference(event, cardApi));
-  correctionInput.addEventListener("input", () => updateCorrectionSuggestions(cardApi));
+  correctionInput.addEventListener("input", () => {
+    resetCorrectionCoverConfirmation(cardApi);
+    updateCorrectionSuggestions(cardApi);
+  });
   correctionInput.addEventListener("keydown", (event) => handleCorrectionInputKeyDown(event, cardApi));
   correctionCancelButton.addEventListener("click", () => hideCorrectionPrompt(cardApi));
+  correctionCoverConfirmButton.addEventListener("click", () => saveConfirmedCorrectedReference(cardApi));
+  correctionCoverBackButton.addEventListener("click", () => resetCorrectionCoverConfirmation(cardApi, { focus: true }));
   enableSwipeDismiss(cardApi);
   updateFeedbackActions(cardApi);
   cardApi.applyFilters();
@@ -1725,6 +2270,9 @@ function normalizeGameSearchRecord(game) {
     year_published: cleanNumber(game.year_published ?? game.yearpublished ?? details.year_published),
     usersrated: cleanNumber(game.usersrated ?? details.usersrated),
     is_expansion: Boolean(game.is_expansion),
+    thumbnail_url: game.thumbnail_url || details.thumbnail_url || "",
+    image_url: game.image_url || details.image_url || "",
+    bgg_url: game.bgg_url || details.bgg_url || `https://boardgamegeek.com/boardgame/${gameId}`,
     normalizedName,
     searchTokens: uniqueTokens(normalizedName),
   };
@@ -1769,7 +2317,12 @@ function renderCorrectionSuggestions(card, suggestions) {
     button.addEventListener("click", () => {
       correctionInput.value = suggestion.name;
       renderCorrectionSuggestions(card, [suggestion]);
-      submitCorrectedReference(new Event("submit"), card);
+      showCorrectionCoverConfirmation(card, suggestion).catch((error) => {
+        console.error(error);
+        resetCorrectionCoverConfirmation(card);
+        card.feedbackControls.correctionStatus.textContent =
+          error.message || "Could not load that game's cover.";
+      });
     });
     fragment.append(button);
   }
@@ -2416,6 +2969,8 @@ function setInfoPanelOpen(open, { focusContributor = false } = {}) {
       : "Enter the contributor password.";
     if (contributorMode && contributorActiveTab === "latest") {
       loadContributorReview();
+    } else if (contributorMode && contributorActiveTab === "detector") {
+      loadDetectorReview();
     }
     window.setTimeout(() => {
       if (focusContributor) {
@@ -2428,9 +2983,9 @@ function setInfoPanelOpen(open, { focusContributor = false } = {}) {
 }
 
 function selectContributorTab(tab, { load = true } = {}) {
-  const nextTab = tab === "latest" ? "latest" : "mode";
+  const nextTab = ["latest", "detector"].includes(tab) ? tab : "mode";
 
-  if (nextTab === "latest" && (!contributorMode || !contributorPassword)) {
+  if (nextTab !== "mode" && (!contributorMode || !contributorPassword)) {
     contributorStatus.textContent = "Log in before reviewing saved images.";
     contributorActiveTab = "mode";
   } else {
@@ -2450,6 +3005,9 @@ function selectContributorTab(tab, { load = true } = {}) {
   if (contributorActiveTab === "latest" && load) {
     loadContributorReview();
     scrollContributorReviewIntoView();
+  } else if (contributorActiveTab === "detector" && load) {
+    loadDetectorReview();
+    window.setTimeout(() => detectorReviewPanel?.scrollIntoView({ block: "start", behavior: "smooth" }), 60);
   }
 }
 
@@ -2513,6 +3071,183 @@ async function loadContributorReview({ force = false } = {}) {
   return contributorReviewLoadPromise;
 }
 
+async function loadDetectorReview({ force = false } = {}) {
+  if (!contributorMode || !contributorPassword) {
+    detectorReviewStatus.textContent = "Log in to review detector corrections.";
+    return;
+  }
+  if (force) {
+    detectorReviewLoadPromise = null;
+  }
+  if (detectorReviewLoadPromise) {
+    return detectorReviewLoadPromise;
+  }
+  detectorReviewRefreshButton.disabled = true;
+  detectorReviewStatus.textContent = "Loading detector corrections...";
+  detectorReviewLoadPromise = Promise.all([
+    fetch(apiUrl("/contributor/detector-annotations?status=needs_review&limit=50", contributorApiBase), {
+      cache: "no-store",
+      headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
+    }),
+    fetch(apiUrl("/contributor/detector-training-status", contributorApiBase), {
+      cache: "no-store",
+      headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
+    }),
+  ])
+    .then(async ([annotationsResponse, trainingResponse]) => {
+      const annotations = await annotationsResponse.json().catch(() => ({}));
+      const training = await trainingResponse.json().catch(() => ({}));
+      if (!annotationsResponse.ok) {
+        throw new Error(annotations.detail || `Could not load detector corrections: ${annotationsResponse.status}`);
+      }
+      if (!trainingResponse.ok) {
+        throw new Error(training.detail || `Could not load training status: ${trainingResponse.status}`);
+      }
+      renderDetectorReview(annotations.annotations || [], annotations.counts || {});
+      renderDetectorTrainingStatus(training);
+    })
+    .catch((error) => {
+      console.error(error);
+      detectorReviewStatus.textContent = error.message || "Could not load detector training tools.";
+    })
+    .finally(() => {
+      detectorReviewRefreshButton.disabled = false;
+      detectorReviewLoadPromise = null;
+    });
+  return detectorReviewLoadPromise;
+}
+
+function renderDetectorReview(annotations, counts) {
+  for (const url of detectorReviewImageUrls) {
+    URL.revokeObjectURL(url);
+  }
+  detectorReviewImageUrls = [];
+  detectorReviewGrid.replaceChildren();
+  detectorReviewCount.textContent = `${counts.needs_review || 0} pending · ${counts.approved || 0} approved`;
+  detectorReviewStatus.textContent = annotations.length
+    ? "Approve only scans whose final rectangles correctly cover every game box."
+    : "No detector corrections are waiting for review.";
+  for (const annotation of annotations) {
+    detectorReviewGrid.append(createDetectorReviewCard(annotation));
+  }
+}
+
+function createDetectorReviewCard(annotation) {
+  const card = document.createElement("article");
+  const image = document.createElement("img");
+  const body = document.createElement("div");
+  const title = document.createElement("strong");
+  const meta = document.createElement("div");
+  const actions = document.createElement("div");
+  const approveButton = document.createElement("button");
+  const rejectButton = document.createElement("button");
+  const status = document.createElement("div");
+  card.className = "contributorReviewCard";
+  image.className = "contributorReviewImage";
+  body.className = "contributorReviewBody";
+  meta.className = "contributorReviewMeta";
+  actions.className = "contributorReviewActions";
+  actions.classList.add("detectorReviewActions");
+  status.className = "contributorReviewItemStatus";
+  image.alt = "Corrected detector scan";
+  title.textContent = `Corrected scan ${annotation.annotation_id.slice(0, 8)}`;
+  meta.textContent = `${annotation.accepted_boxes?.length || 0} accepted · `
+    + `${annotation.manual_boxes?.length || 0} added · ${annotation.removed_boxes?.length || 0} removed`;
+  approveButton.type = "button";
+  rejectButton.type = "button";
+  approveButton.textContent = "Approve";
+  rejectButton.textContent = "Reject";
+  status.textContent = "Needs review";
+  actions.append(approveButton, rejectButton);
+  body.append(title, meta, actions, status);
+  card.append(image, body);
+  loadDetectorAnnotationImage(annotation, image);
+  image.addEventListener("click", () => openCropViewer(image, title.textContent));
+  approveButton.addEventListener("click", () => reviewDetectorAnnotation(annotation, "approve", card, status));
+  rejectButton.addEventListener("click", () => reviewDetectorAnnotation(annotation, "reject", card, status));
+  return card;
+}
+
+async function loadDetectorAnnotationImage(annotation, image) {
+  try {
+    const response = await fetch(apiUrl(annotation.image_url, contributorApiBase), {
+      headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
+    });
+    if (!response.ok) {
+      throw new Error(`Image failed: ${response.status}`);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    detectorReviewImageUrls.push(url);
+    image.src = url;
+  } catch (error) {
+    console.warn(error);
+    image.classList.add("loadFailed");
+  }
+}
+
+async function reviewDetectorAnnotation(annotation, action, card, status) {
+  status.textContent = action === "approve" ? "Approving..." : "Rejecting...";
+  const formData = new FormData();
+  formData.append("annotation_id", annotation.annotation_id);
+  formData.append("action", action);
+  try {
+    const response = await fetch(apiUrl("/contributor/detector-annotation-review", contributorApiBase), {
+      method: "POST",
+      headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
+      body: formData,
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      throw new Error(result.detail || `Review failed: ${response.status}`);
+    }
+    card.remove();
+    loadDetectorReview({ force: true });
+  } catch (error) {
+    status.textContent = error.message || "Review failed.";
+  }
+}
+
+function renderDetectorTrainingStatus(training) {
+  const job = training.job || { status: "idle" };
+  const running = ["preparing", "evaluating_baseline", "training", "evaluating", "exporting"]
+    .includes(job.status);
+  startDetectorTrainingButton.disabled = !training.ready || running;
+  if (running) {
+    detectorTrainingStatus.textContent = `Candidate job: ${job.status}.`;
+  } else if (job.status === "completed") {
+    const metrics = job.metrics || {};
+    detectorTrainingStatus.textContent = job.candidate_improved
+      ? `Candidate beat the baseline and awaits manual review · mAP50 ${Number(metrics.map50 || 0).toFixed(3)}.`
+      : `Candidate did not beat the baseline · mAP50 ${Number(metrics.map50 || 0).toFixed(3)}.`;
+  } else if (job.status === "failed") {
+    detectorTrainingStatus.textContent = `Last candidate failed: ${job.error || "Unknown error"}`;
+  } else if (!training.ready) {
+    detectorTrainingStatus.textContent = (training.reasons || []).join(" · ");
+  } else {
+    detectorTrainingStatus.textContent = "Enough reviewed data is available to train an isolated candidate.";
+  }
+}
+
+async function startDetectorTraining() {
+  startDetectorTrainingButton.disabled = true;
+  detectorTrainingStatus.textContent = "Preparing candidate training...";
+  try {
+    const response = await fetch(apiUrl("/contributor/start-detector-training", contributorApiBase), {
+      method: "POST",
+      headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      throw new Error(result.detail || `Could not start training: ${response.status}`);
+    }
+    detectorTrainingStatus.textContent = "Candidate training started. Refresh to check progress.";
+  } catch (error) {
+    detectorTrainingStatus.textContent = error.message || "Could not start candidate training.";
+  } finally {
+    loadDetectorReview({ force: true });
+  }
+}
+
 function renderContributorReview(references, total) {
   clearContributorReviewImages();
   contributorReviewGrid.replaceChildren();
@@ -2534,6 +3269,7 @@ function renderContributorReview(references, total) {
 
 function createContributorReviewCard(reference) {
   const card = document.createElement("article");
+  const dismissButton = document.createElement("button");
   const image = document.createElement("img");
   const body = document.createElement("div");
   const title = document.createElement("strong");
@@ -2543,6 +3279,7 @@ function createContributorReviewCard(reference) {
   const actions = document.createElement("div");
   const confirmButton = document.createElement("button");
   const denyButton = document.createElement("button");
+  const undoButton = document.createElement("button");
   const bggLink = document.createElement("a");
   const status = document.createElement("div");
 
@@ -2554,6 +3291,8 @@ function createContributorReviewCard(reference) {
   feedback.className = "contributorReviewFeedback";
   actions.className = "contributorReviewActions";
   status.className = "contributorReviewItemStatus";
+  undoButton.className = "contributorReviewUndo";
+  dismissButton.className = "contributorReviewDismiss";
 
   image.alt = reference.name;
   image.loading = "lazy";
@@ -2564,8 +3303,14 @@ function createContributorReviewCard(reference) {
   feedback.textContent = formatReferenceFeedback(reference.feedback);
   confirmButton.type = "button";
   denyButton.type = "button";
+  undoButton.type = "button";
+  dismissButton.type = "button";
   confirmButton.textContent = "Looks right";
   denyButton.textContent = "Wrong label";
+  undoButton.textContent = "Undo";
+  undoButton.hidden = true;
+  dismissButton.textContent = "X";
+  dismissButton.setAttribute("aria-label", `Close ${reference.name} review card`);
   bggLink.href = reference.bgg_url || `https://boardgamegeek.com/boardgame/${reference.id}`;
   bggLink.target = "_blank";
   bggLink.rel = "noreferrer";
@@ -2581,6 +3326,7 @@ function createContributorReviewCard(reference) {
     denyButton,
     feedback,
     status,
+    undoButton,
   }));
   denyButton.addEventListener("click", () => submitContributorReferenceReview(reference, "deny", {
     card,
@@ -2588,11 +3334,21 @@ function createContributorReviewCard(reference) {
     denyButton,
     feedback,
     status,
+    undoButton,
   }));
+  undoButton.addEventListener("click", () => undoContributorReferenceReview(reference, {
+    card,
+    confirmButton,
+    denyButton,
+    feedback,
+    status,
+    undoButton,
+  }));
+  dismissButton.addEventListener("click", () => dismissContributorReviewCard(card));
 
-  actions.append(confirmButton, denyButton, bggLink);
+  actions.append(confirmButton, denyButton, undoButton, bggLink);
   body.append(title, meta, quality, feedback, actions, status);
-  card.append(image, body);
+  card.append(dismissButton, image, body);
 
   return card;
 }
@@ -2627,7 +3383,7 @@ async function loadContributorReferenceImage(reference, image) {
 }
 
 async function submitContributorReferenceReview(reference, action, controls) {
-  const { card, confirmButton, denyButton, feedback, status } = controls;
+  const { card, confirmButton, denyButton, feedback, status, undoButton } = controls;
 
   if (!contributorMode || !contributorPassword) {
     selectContributorTab("mode", { load: false });
@@ -2664,14 +3420,68 @@ async function submitContributorReferenceReview(reference, action, controls) {
     feedback.textContent = formatReferenceFeedback(reference.feedback);
     card.classList.toggle("reviewConfirmed", action === "confirm");
     card.classList.toggle("reviewDenied", action === "deny");
+    reference.lastReviewAction = action;
+    confirmButton.hidden = true;
+    denyButton.hidden = true;
+    undoButton.hidden = false;
+    undoButton.disabled = false;
     status.textContent = action === "confirm" ? "Marked right" : "Marked wrong";
     setStatus(`${reference.name} review saved.`);
-    dismissContributorReviewCard(card);
   } catch (error) {
     console.error(error);
     status.textContent = error.message || "Could not save review.";
     confirmButton.disabled = false;
     denyButton.disabled = false;
+  }
+}
+
+async function undoContributorReferenceReview(reference, controls) {
+  const { card, confirmButton, denyButton, feedback, status, undoButton } = controls;
+  const priorAction = reference.lastReviewAction;
+
+  if (!priorAction) {
+    return;
+  }
+
+  undoButton.disabled = true;
+  status.textContent = "Undoing...";
+
+  try {
+    const formData = new FormData();
+    formData.append("action", "undo");
+    formData.append("undo_action", priorAction);
+    formData.append("game_id", String(reference.id));
+    formData.append("game_name", reference.name);
+    formData.append("reference_image_path", reference.image_path);
+
+    const response = await fetch(apiUrl("/contributor/reference-feedback", contributorApiBase), {
+      method: "POST",
+      headers: {
+        [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword,
+      },
+      body: formData,
+    });
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok || !result.ok) {
+      throw new Error(result.detail || `Undo failed: ${response.status}`);
+    }
+
+    reference.feedback = result.feedback || reference.feedback || {};
+    reference.lastReviewAction = "";
+    feedback.textContent = formatReferenceFeedback(reference.feedback);
+    card.classList.remove("reviewConfirmed", "reviewDenied");
+    confirmButton.hidden = false;
+    denyButton.hidden = false;
+    confirmButton.disabled = false;
+    denyButton.disabled = false;
+    undoButton.hidden = true;
+    status.textContent = "Review undone";
+    setStatus(`${reference.name} review undone.`);
+  } catch (error) {
+    console.error(error);
+    status.textContent = error.message || "Could not undo review.";
+    undoButton.disabled = false;
   }
 }
 
@@ -2895,7 +3705,86 @@ async function submitCorrectedReference(event, card) {
       return;
     }
 
-    correctionStatus.textContent = "Saving correct reference...";
+    await showCorrectionCoverConfirmation(card, game);
+  } catch (error) {
+    console.error(error);
+    correctionStatus.textContent = error.message || "Could not load that game's cover.";
+    correctionSaveButton.disabled = false;
+    correctionCancelButton.disabled = false;
+  }
+}
+
+async function showCorrectionCoverConfirmation(card, game) {
+  const {
+    correctionLabel,
+    correctionSuggestions,
+    correctionCoverPanel,
+    correctionCoverImage,
+    correctionCoverName,
+    correctionCoverQuestion,
+    correctionCoverConfirmButton,
+    correctionActions,
+    correctionSaveButton,
+    correctionCancelButton,
+    correctionStatus,
+  } = card.feedbackControls;
+  correctionSaveButton.disabled = true;
+  correctionCancelButton.disabled = true;
+  correctionStatus.textContent = "Loading official cover...";
+  let preview = {
+    ...game,
+    thumbnail_url: game.thumbnail_url || "",
+    image_url: game.image_url || "",
+  };
+  if (!preview.thumbnail_url && !preview.image_url) {
+    const response = await fetch(
+      apiUrl(`/contributor/bgg-game-preview?game_id=${encodeURIComponent(game.id)}`, contributorApiBase),
+      { headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword } },
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.detail || `Could not load BGG cover: ${response.status}`);
+    }
+    preview = { ...game, ...result };
+  }
+  card.correctionSelectedGame = preview;
+  correctionCoverConfirmButton.disabled = false;
+  correctionCoverImage.onerror = () => {
+    if (preview.image_url && correctionCoverImage.src !== preview.image_url) {
+      correctionCoverImage.src = preview.image_url;
+      return;
+    }
+    correctionStatus.textContent = "The official cover could not be displayed. Choose another game.";
+    correctionCoverConfirmButton.disabled = true;
+  };
+  correctionCoverImage.src = preview.thumbnail_url || preview.image_url;
+  correctionCoverImage.alt = `${preview.name} cover`;
+  correctionCoverName.textContent = preview.name;
+  correctionCoverQuestion.textContent = "Is this the same game shown in your scan?";
+  correctionLabel.hidden = true;
+  correctionSuggestions.hidden = true;
+  correctionCoverPanel.hidden = false;
+  correctionActions.hidden = true;
+  correctionCancelButton.disabled = false;
+  correctionStatus.textContent = "Confirm the cover before submitting.";
+}
+
+async function saveConfirmedCorrectedReference(card) {
+  const {
+    correctionCoverConfirmButton,
+    correctionCoverBackButton,
+    correctionActions,
+    correctionStatus,
+    feedbackStatus,
+  } = card.feedbackControls;
+  const game = card.correctionSelectedGame;
+  if (!game) {
+    return;
+  }
+  correctionCoverConfirmButton.disabled = true;
+  correctionCoverBackButton.disabled = true;
+  correctionStatus.textContent = "Saving correct reference...";
+  try {
     await sendRecognitionFeedback(
       card,
       "confirm",
@@ -2921,8 +3810,36 @@ async function submitCorrectedReference(event, card) {
   } catch (error) {
     console.error(error);
     correctionStatus.textContent = error.message || "Could not save correct game.";
-    correctionSaveButton.disabled = false;
-    correctionCancelButton.disabled = false;
+    correctionCoverConfirmButton.disabled = false;
+    correctionCoverBackButton.disabled = false;
+  }
+}
+
+function resetCorrectionCoverConfirmation(card, { focus = false } = {}) {
+  const {
+    correctionLabel,
+    correctionSuggestions,
+    correctionCoverPanel,
+    correctionCoverImage,
+    correctionCoverConfirmButton,
+    correctionCoverBackButton,
+    correctionActions,
+    correctionSaveButton,
+    correctionCancelButton,
+  } = card.feedbackControls;
+  card.correctionSelectedGame = null;
+  correctionCoverImage.removeAttribute("src");
+  correctionCoverImage.onerror = null;
+  correctionCoverPanel.hidden = true;
+  correctionLabel.hidden = false;
+  correctionSuggestions.hidden = false;
+  correctionActions.hidden = false;
+  correctionSaveButton.disabled = false;
+  correctionCancelButton.disabled = false;
+  correctionCoverConfirmButton.disabled = false;
+  correctionCoverBackButton.disabled = false;
+  if (focus) {
+    card.feedbackControls.correctionInput.focus();
   }
 }
 
@@ -2977,6 +3894,7 @@ async function showCorrectionPrompt(card) {
 
   correctionPanel.hidden = false;
   correctionPanel.classList.add("isOpen");
+  resetCorrectionCoverConfirmation(card);
   correctionInput.value = "";
   correctionSaveButton.disabled = false;
   correctionCancelButton.disabled = false;
@@ -3005,6 +3923,7 @@ function hideCorrectionPrompt(card, { clear = true } = {}) {
 
   correctionPanel.hidden = true;
   correctionPanel.classList.remove("isOpen");
+  resetCorrectionCoverConfirmation(card);
   correctionSaveButton.disabled = false;
   correctionCancelButton.disabled = false;
 
@@ -3611,8 +4530,11 @@ function redrawActiveDetections() {
     clearSelectedMatchCard();
   }
 
+  const detections = manualDraftDetection
+    ? [...activeSourceCanvas.lastDetections, manualDraftDetection]
+    : activeSourceCanvas.lastDetections;
   drawDetections(
-    activeSourceCanvas.lastDetections,
+    detections,
     activeSourceCanvas,
     activeDisplayElement,
     selectedMatchCard?.detection || null,
@@ -3641,9 +4563,11 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   ctx.clearRect(0, 0, displayWidth, displayHeight);
 
-  const scale = Math.max(displayWidth / sourceWidth, displayHeight / sourceHeight);
+  const baseScale = Math.min(displayWidth / sourceWidth, displayHeight / sourceHeight);
+  const scale = baseScale * (manualBoxMode ? modifierZoom : 1);
   const offsetX = (displayWidth - sourceWidth * scale) / 2;
-  const offsetY = (displayHeight - sourceHeight * scale) / 2;
+  const offsetY = (displayHeight - sourceHeight * scale) / 2
+    + (manualBoxMode ? modifierPanY : 0);
   const styles = getComputedStyle(document.documentElement);
   const boxStart = cssValue(styles, "--blue", "#5d7cff");
   const boxEnd = cssValue(styles, "--violet", "#bf5af2");
@@ -3668,7 +4592,9 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     const y = detection.y * scale + offsetY;
     const width = detection.width * scale;
     const height = detection.height * scale;
-    const rawLabel = selected && selectedLabel
+    const rawLabel = detection.manual
+      ? "Manual"
+      : selected && selectedLabel
       ? `${selectedLabel} ${detection.score.toFixed(2)}`
       : `${detection.score.toFixed(2)}`;
     const boxGradient = ctx.createLinearGradient(x, y, x + width, y + height);
@@ -3805,6 +4731,13 @@ function clearResults(cancelActiveScan = true) {
   hideCropZoomPreview();
   closeCropViewer();
   clearSelectedMatchCard();
+  manualBoxMode = false;
+  manualBoxGesture = null;
+  manualDraftDetection = null;
+  modifierZoom = 1;
+  modifierPanY = 0;
+  document.body.classList.remove("manualBoxMode");
+  applyModifierZoom();
   currentResultCards = [];
   resultsGrid.replaceChildren();
   resultsPanel.hidden = true;
@@ -3850,6 +4783,7 @@ function setControlsEnabled(enabled) {
   const frozenFrame = isCameraFrameFrozen();
   const liveCamera = cameraReady && !frozenFrame;
   const imagePreviewActive = activeDisplayElement === photoPreview && !photoPreview.hidden;
+  const canDrawMissedBox = Boolean(activeSourceCanvas && (frozenFrame || imagePreviewActive));
 
   document.body.classList.toggle("cameraLive", liveCamera);
   document.body.classList.toggle("cameraFrozen", frozenFrame);
@@ -3861,6 +4795,11 @@ function setControlsEnabled(enabled) {
   scanButton.hidden = !cameraReady || frozenFrame;
   backToCameraButton.hidden = !frozenFrame;
   closeScanButton.hidden = cameraReady || !imagePreviewActive;
+  modifyBoxesButton.hidden = !canDrawMissedBox || manualBoxMode;
+  finishModifyingButton.hidden = !manualBoxMode;
+  exitModifierButton.hidden = !manualBoxMode;
+  zoomOutButton.hidden = !manualBoxMode;
+  zoomInButton.hidden = !manualBoxMode;
   switchCameraButton.hidden = !cameraReady || frozenFrame;
 
   startCameraButton.disabled = !enabled || cameraReady || imagePreviewActive;
@@ -3872,6 +4811,11 @@ function setControlsEnabled(enabled) {
   scanButton.disabled = !enabled || !cameraReady || frozenFrame;
   backToCameraButton.disabled = !enabled || !frozenFrame;
   closeScanButton.disabled = !enabled || cameraReady || !imagePreviewActive;
+  modifyBoxesButton.disabled = !enabled || !canDrawMissedBox;
+  finishModifyingButton.disabled = !enabled || !manualBoxMode;
+  exitModifierButton.disabled = !enabled || !manualBoxMode;
+  zoomOutButton.disabled = !enabled || !manualBoxMode || modifierZoom <= 0.5;
+  zoomInButton.disabled = !enabled || !manualBoxMode || modifierZoom >= 3;
   switchCameraButton.disabled = !enabled || !cameraReady || frozenFrame;
   playersFilter.disabled = !enabled;
   timeFilter.disabled = !enabled;
