@@ -140,6 +140,7 @@ let manualBoxMode = false;
 let manualBoxGesture = null;
 let manualDraftDetection = null;
 let modifierZoom = 1;
+let modifierPanX = 0;
 let modifierPanY = 0;
 let modifierGestureStartZoom = 1;
 
@@ -543,6 +544,7 @@ function beginManualBoxMode() {
   manualBoxGesture = null;
   manualDraftDetection = null;
   modifierZoom = 1;
+  modifierPanX = 0;
   modifierPanY = 0;
   document.body.classList.add("manualBoxMode");
   applyModifierZoom();
@@ -556,6 +558,7 @@ function endManualBoxMode() {
   manualBoxGesture = null;
   manualDraftDetection = null;
   modifierZoom = 1;
+  modifierPanX = 0;
   modifierPanY = 0;
   document.body.classList.remove("manualBoxMode");
   applyModifierZoom();
@@ -575,7 +578,7 @@ function manualBoxSourcePoint(event) {
   const sourceWidth = activeSourceCanvas.width;
   const sourceHeight = activeSourceCanvas.height;
   const scale = Math.min(displayWidth / sourceWidth, displayHeight / sourceHeight) * modifierZoom;
-  const offsetX = (displayWidth - sourceWidth * scale) / 2;
+  const offsetX = (displayWidth - sourceWidth * scale) / 2 + modifierPanX;
   const offsetY = (displayHeight - sourceHeight * scale) / 2 + modifierPanY;
   const sourceX = (event.clientX - rect.left - offsetX) / scale;
   const sourceY = (event.clientY - rect.top - offsetY) / scale;
@@ -593,6 +596,7 @@ function changeModifierZoom(delta) {
     return;
   }
   modifierZoom = Math.max(0.5, Math.min(3, modifierZoom + delta));
+  modifierPanX = clampModifierPanX(modifierPanX);
   modifierPanY = clampModifierPanY(modifierPanY);
   applyModifierZoom();
   redrawActiveDetections();
@@ -613,7 +617,10 @@ function scrollModifierImage(event) {
     event.preventDefault();
     return;
   }
-  modifierPanY = clampModifierPanY(modifierPanY - event.deltaY);
+  const horizontalDelta = event.deltaX || (event.shiftKey ? event.deltaY : 0);
+  const verticalDelta = event.shiftKey ? 0 : event.deltaY;
+  modifierPanX = clampModifierPanX(modifierPanX - horizontalDelta);
+  modifierPanY = clampModifierPanY(modifierPanY - verticalDelta);
   applyModifierZoom();
   redrawActiveDetections();
   event.preventDefault();
@@ -632,6 +639,7 @@ function changeModifierPinch(event) {
     return;
   }
   modifierZoom = Math.max(0.5, Math.min(3, modifierGestureStartZoom * event.scale));
+  modifierPanX = clampModifierPanX(modifierPanX);
   modifierPanY = clampModifierPanY(modifierPanY);
   applyModifierZoom();
   redrawActiveDetections();
@@ -661,8 +669,26 @@ function clampModifierPanY(value) {
   return Math.max(-limit, Math.min(limit, value));
 }
 
+function clampModifierPanX(value) {
+  if (!manualBoxMode || modifierZoom <= 1 || !activeSourceCanvas) {
+    return 0;
+  }
+  const rect = boxesCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return 0;
+  }
+  const baseScale = Math.min(
+    rect.width / activeSourceCanvas.width,
+    rect.height / activeSourceCanvas.height,
+  );
+  const zoomedWidth = activeSourceCanvas.width * baseScale * modifierZoom;
+  const limit = Math.max(0, (zoomedWidth - rect.width) / 2);
+  return Math.max(-limit, Math.min(limit, value));
+}
+
 function applyModifierZoom() {
   document.documentElement.style.setProperty("--modifier-zoom", String(modifierZoom));
+  document.documentElement.style.setProperty("--modifier-pan-x", `${modifierPanX}px`);
   document.documentElement.style.setProperty("--modifier-pan-y", `${modifierPanY}px`);
   zoomOutButton.disabled = !manualBoxMode || modifierZoom <= 0.5;
   zoomInButton.disabled = !manualBoxMode || modifierZoom >= 3;
@@ -4565,7 +4591,8 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
 
   const baseScale = Math.min(displayWidth / sourceWidth, displayHeight / sourceHeight);
   const scale = baseScale * (manualBoxMode ? modifierZoom : 1);
-  const offsetX = (displayWidth - sourceWidth * scale) / 2;
+  const offsetX = (displayWidth - sourceWidth * scale) / 2
+    + (manualBoxMode ? modifierPanX : 0);
   const offsetY = (displayHeight - sourceHeight * scale) / 2
     + (manualBoxMode ? modifierPanY : 0);
   const styles = getComputedStyle(document.documentElement);
@@ -4735,6 +4762,7 @@ function clearResults(cancelActiveScan = true) {
   manualBoxGesture = null;
   manualDraftDetection = null;
   modifierZoom = 1;
+  modifierPanX = 0;
   modifierPanY = 0;
   document.body.classList.remove("manualBoxMode");
   applyModifierZoom();

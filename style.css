@@ -124,7 +124,9 @@ body.manualBoxMode #boxes {
 }
 
 body.manualBoxMode #photoPreview {
-  transform: translateY(var(--modifier-pan-y, 0px)) scale(var(--modifier-zoom, 1));
+  transform:
+    translate(var(--modifier-pan-x, 0px), var(--modifier-pan-y, 0px))
+    scale(var(--modifier-zoom, 1));
   transform-origin: center;
 }
 
