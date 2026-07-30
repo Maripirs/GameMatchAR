@@ -723,6 +723,11 @@ body.contributorMode #infoButton {
   transform: translateY(-6px) scale(0.98);
 }
 
+.contributorReviewCard.isFlaggedForReview {
+  border-color: color-mix(in srgb, var(--danger) 68%, var(--panel-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
 .contributorReviewImage {
   display: block;
   width: 98px;

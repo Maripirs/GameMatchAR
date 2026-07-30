@@ -10,6 +10,7 @@ const GAME_DETAILS_URL = "./data/game_details.json";
 const GAME_OBSCURE_DETAILS_URL = "./data/game_details_obscure.json";
 const PLAYER_EXPANSION_INDEX_URL = "./data/player_expansion_index.json";
 const GAME_SEARCH_INDEX_URL = "./data/games_index.json";
+const GAME_ALIASES_URL = "./data/game_aliases.json";
 const BACKEND_MATCH_TIMEOUT_MS = 20000;
 const BACKEND_HEALTH_TIMEOUT_MS = 5000;
 const DETAIL_SCORE_THRESHOLD = 0.775;
@@ -91,6 +92,8 @@ const contributorModeState = document.getElementById("contributorModeState");
 const contributorStatus = document.getElementById("contributorStatus");
 const contributorTabs = document.getElementById("contributorTabs");
 const contributorTabButtons = Array.from(document.querySelectorAll("[data-contributor-tab]"));
+const latestContributorTabButton = document.querySelector('[data-contributor-tab="latest"]');
+const detectorContributorTabButton = document.querySelector('[data-contributor-tab="detector"]');
 const contributorPanels = Array.from(document.querySelectorAll("[data-contributor-panel]"));
 const contributorReviewPanel = document.getElementById("contributorReviewPanel");
 const contributorReviewRefreshButton = document.getElementById("contributorReviewRefreshButton");
@@ -135,6 +138,7 @@ let currentResultCards = [];
 let selectedMatchCard = null;
 let startupStatusActive = true;
 let contributorMode = false;
+let contributorRole = "";
 let contributorPassword = "";
 let contributorApiBase = configuredApiBase();
 let contributorActiveTab = "mode";
@@ -2895,19 +2899,26 @@ async function loadGameSearchIndex() {
   await ensureGameDetailsLoaded();
 
   try {
-    const response = await fetch(GAME_SEARCH_INDEX_URL, { cache: "no-store" });
+    const [response, aliasesResponse] = await Promise.all([
+      fetch(GAME_SEARCH_INDEX_URL, { cache: "no-store" }),
+      fetch(GAME_ALIASES_URL, { cache: "no-store" }),
+    ]);
 
     if (!response.ok) {
       throw new Error(`Could not load game search index: ${response.status}`);
     }
 
     const payload = await response.json();
+    const aliasesById = aliasesResponse.ok ? await aliasesResponse.json() : {};
     const records = Array.isArray(payload)
       ? payload
       : Object.values(payload);
 
     gameSearchIndex = records
-      .map(normalizeGameSearchRecord)
+      .map((game) => normalizeGameSearchRecord({
+        ...game,
+        aliases: aliasesById[String(game?.id)] || game?.aliases || [],
+      }))
       .filter(Boolean);
   } catch (error) {
     console.warn("Game search index unavailable; using details database:", error);
@@ -2930,6 +2941,10 @@ function normalizeGameSearchRecord(game) {
 
   const details = gameDetailsById.get(gameId) || {};
   const normalizedName = normalizeGameLookupText(name);
+  const aliases = Array.isArray(game.aliases)
+    ? game.aliases.map((alias) => String(alias || "").trim()).filter(Boolean)
+    : [];
+  const normalizedAliases = aliases.map(normalizeGameLookupText).filter(Boolean);
 
   if (!normalizedName) {
     return null;
@@ -2947,6 +2962,8 @@ function normalizeGameSearchRecord(game) {
     bgg_url: game.bgg_url || details.bgg_url || `https://boardgamegeek.com/boardgame/${gameId}`,
     normalizedName,
     searchTokens: uniqueTokens(normalizedName),
+    aliases,
+    normalizedAliases,
   };
 }
 
@@ -3039,6 +3056,21 @@ function uniqueTokens(value) {
 }
 
 function scoreGameCandidate(query, queryTokens, game) {
+  const titleOptions = [
+    { normalizedName: game.normalizedName, searchTokens: game.searchTokens },
+    ...(game.normalizedAliases || []).map((normalizedName) => ({
+      normalizedName,
+      searchTokens: uniqueTokens(normalizedName),
+    })),
+  ];
+  return Math.max(...titleOptions.map((title) => scoreGameCandidateTitle(
+    query,
+    queryTokens,
+    { ...game, ...title },
+  )));
+}
+
+function scoreGameCandidateTitle(query, queryTokens, game) {
   if (!query || !queryTokens.length || !game.normalizedName) {
     return 0;
   }
@@ -3311,7 +3343,9 @@ function resolveCorrectedGame(value) {
     return null;
   }
 
-  const exact = gameSearchIndex.find((game) => game.normalizedName === query);
+  const exact = gameSearchIndex.find((game) => (
+    game.normalizedName === query || game.normalizedAliases?.includes(query)
+  ));
 
   if (exact) {
     return exact;
@@ -3503,14 +3537,17 @@ async function loginContributor(event) {
     }
 
     contributorPassword = password;
+    contributorRole = result.role === "admin" ? "admin" : "contributor";
     contributorApiBase = nextApiBase;
     saveStoredContributorPassword(password);
     resetBackendMatcherProbe();
 
     contributorPasswordInput.value = "";
-    contributorStatus.textContent = "Contributor mode enabled.";
+    contributorStatus.textContent = contributorRole === "admin"
+      ? "Admin mode enabled."
+      : "Contributor mode enabled.";
     setContributorMode(true);
-    selectContributorTab("latest");
+    selectContributorTab(contributorRole === "admin" ? "latest" : "mode");
     setStatus("Contributor mode on. Use OK or X on each match.");
   } catch (error) {
     console.error(error);
@@ -3548,10 +3585,13 @@ async function restoreStoredContributorLogin() {
     }
 
     contributorPassword = password;
+    contributorRole = result.role === "admin" ? "admin" : "contributor";
     contributorApiBase = nextApiBase;
     resetBackendMatcherProbe();
     contributorPasswordInput.value = "";
-    contributorStatus.textContent = "Contributor mode remembered.";
+    contributorStatus.textContent = contributorRole === "admin"
+      ? "Admin mode remembered."
+      : "Contributor mode remembered.";
     setContributorMode(true);
   } catch (error) {
     console.warn("Could not restore contributor mode:", error);
@@ -3568,6 +3608,7 @@ async function restoreStoredContributorLogin() {
 
 function logoutContributor() {
   contributorPassword = "";
+  contributorRole = "";
   clearStoredContributorPassword();
   setContributorMode(false);
   clearContributorReview();
@@ -3579,8 +3620,12 @@ function logoutContributor() {
 function setContributorMode(enabled) {
   contributorMode = enabled;
   document.body.classList.toggle("contributorMode", contributorMode);
-  contributorModeState.textContent = contributorMode ? "On" : "Off";
+  contributorModeState.textContent = contributorMode
+    ? (contributorRole === "admin" ? "Admin" : "On")
+    : "Off";
   contributorTabs.hidden = !contributorMode;
+  latestContributorTabButton.hidden = !contributorMode || contributorRole !== "admin";
+  detectorContributorTabButton.hidden = !contributorMode || contributorRole !== "admin";
   contributorLoginButton.hidden = contributorMode;
   contributorLogoutButton.hidden = !contributorMode;
   contributorPasswordInput.disabled = contributorMode;
@@ -3637,7 +3682,7 @@ function setInfoPanelOpen(open, { focusContributor = false } = {}) {
   if (open) {
     contributorApiBase = configuredApiBase();
     contributorStatus.textContent = contributorMode
-      ? "Contributor mode is active."
+      ? (contributorRole === "admin" ? "Admin mode is active." : "Contributor mode is active.")
       : "Enter the contributor password.";
     if (contributorMode && contributorActiveTab === "latest") {
       loadContributorReview();
@@ -3657,7 +3702,10 @@ function setInfoPanelOpen(open, { focusContributor = false } = {}) {
 function selectContributorTab(tab, { load = true } = {}) {
   const nextTab = ["latest", "detector"].includes(tab) ? tab : "mode";
 
-  if (nextTab !== "mode" && (!contributorMode || !contributorPassword)) {
+  if (["latest", "detector"].includes(nextTab) && contributorRole !== "admin") {
+    contributorStatus.textContent = "Admin access is required to review submissions.";
+    contributorActiveTab = "mode";
+  } else if (nextTab !== "mode" && (!contributorMode || !contributorPassword)) {
     contributorStatus.textContent = "Log in before reviewing saved images.";
     contributorActiveTab = "mode";
   } else {
@@ -3693,8 +3741,8 @@ function scrollContributorReviewIntoView() {
 }
 
 async function loadContributorReview({ force = false } = {}) {
-  if (!contributorMode || !contributorPassword) {
-    contributorReviewStatus.textContent = "Log in to review saved references.";
+  if (!contributorMode || !contributorPassword || contributorRole !== "admin") {
+    contributorReviewStatus.textContent = "Admin access is required to review saved references.";
     selectContributorTab("mode", { load: false });
     return;
   }
@@ -3744,8 +3792,8 @@ async function loadContributorReview({ force = false } = {}) {
 }
 
 async function loadDetectorReview({ force = false } = {}) {
-  if (!contributorMode || !contributorPassword) {
-    detectorReviewStatus.textContent = "Log in to review detector corrections.";
+  if (!contributorMode || !contributorPassword || contributorRole !== "admin") {
+    detectorReviewStatus.textContent = "Admin access is required for detector review.";
     return;
   }
   if (force) {
@@ -3843,6 +3891,7 @@ function createDetectorReviewCard(annotation, { untouched = false } = {}) {
   const rejectButton = document.createElement("button");
   const status = document.createElement("div");
   card.className = "contributorReviewCard";
+  card.classList.toggle("isFlaggedForReview", Boolean(reference.flagged_for_review));
   image.className = "contributorReviewImage";
   body.className = "contributorReviewBody";
   meta.className = "contributorReviewMeta";
@@ -4441,6 +4490,9 @@ function createContributorReviewCard(reference) {
   image.decoding = "async";
   title.textContent = reference.name;
   meta.textContent = `BGG ${reference.id} · ${formatReferenceDate(reference.created_at)}`;
+  if (reference.flagged_for_review) {
+    meta.textContent += ` · Re-review after ${reference.previous_admin_action || "admin decision"}`;
+  }
   quality.textContent = formatReferenceQuality(reference);
   feedback.textContent = formatReferenceFeedback(reference.feedback);
   confirmButton.type = "button";
@@ -4457,7 +4509,7 @@ function createContributorReviewCard(reference) {
   bggLink.target = "_blank";
   bggLink.rel = "noreferrer";
   bggLink.textContent = "BGG";
-  status.textContent = "Waiting for review";
+  status.textContent = reference.review_reason || "Waiting for review";
 
   loadContributorReferenceImage(reference, image);
   enableCropHoverPreview(image);
@@ -4560,15 +4612,8 @@ async function submitContributorReferenceReview(reference, action, controls) {
 
     reference.feedback = result.feedback || reference.feedback || {};
     feedback.textContent = formatReferenceFeedback(reference.feedback);
-    card.classList.toggle("reviewConfirmed", action === "confirm");
-    card.classList.toggle("reviewDenied", action === "deny");
-    reference.lastReviewAction = action;
-    confirmButton.hidden = true;
-    denyButton.hidden = true;
-    undoButton.hidden = false;
-    undoButton.disabled = false;
-    status.textContent = action === "confirm" ? "Marked right" : "Marked wrong";
     setStatus(`${reference.name} review saved.`);
+    dismissContributorReviewCard(card);
   } catch (error) {
     console.error(error);
     status.textContent = error.message || "Could not save review.";
