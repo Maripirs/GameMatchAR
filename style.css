@@ -872,6 +872,135 @@ body.imagePreview #controls {
   grid-column: 1 / -1;
 }
 
+.detectorBoxLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  color: var(--app-muted);
+  font-size: 11px;
+}
+
+.detectorBoxLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.detectorBoxLegend i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 3px solid;
+  border-radius: 2px;
+}
+
+.detectorKeepColor {
+  border-color: #32d583 !important;
+}
+
+.detectorRemoveColor {
+  border-color: #ff3b30 !important;
+}
+
+.detectorManualColor {
+  border-color: #ffd60a !important;
+}
+
+.detectorReviewEditorOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(4, 5, 12, 0.9);
+}
+
+.detectorReviewEditorWindow {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(1100px, 100%);
+  height: min(920px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: var(--panel-bg-strong);
+  box-shadow: var(--panel-shadow);
+}
+
+.detectorReviewEditorHeader,
+.detectorReviewEditorToolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.detectorReviewEditorHeader {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.detectorReviewEditorHeader h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.detectorReviewEditorWindow > p {
+  margin: 0;
+  padding: 10px 14px;
+  color: var(--app-muted);
+  font-size: 0.88rem;
+}
+
+.detectorReviewEditorCanvasWrap {
+  display: grid;
+  min-height: 0;
+  overflow: auto;
+  place-items: center;
+  padding: 12px;
+  background: #090a10;
+}
+
+.detectorReviewEditorCanvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.detectorReviewEditorToolbar {
+  flex-wrap: wrap;
+  border-top: 1px solid var(--panel-border);
+}
+
+.detectorReviewEditorToolbar button {
+  min-height: 42px;
+}
+
+.detectorReviewEditorStatus {
+  color: var(--app-muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .detectorReviewEditorOverlay {
+    padding: 0;
+  }
+
+  .detectorReviewEditorWindow {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .detectorReviewEditorToolbar button {
+    flex: 1 1 auto;
+  }
+}
+
 #detectorReviewPanel {
   display: grid;
   gap: 10px;

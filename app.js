@@ -3269,17 +3269,17 @@ async function loadDetectorReview({ force = false } = {}) {
       const annotations = await annotationsResponse.json().catch(() => ({}));
       const training = await trainingResponse.json().catch(() => ({}));
       if (!annotationsResponse.ok) {
-        throw new Error(annotations.detail || `Could not load detector corrections: ${annotationsResponse.status}`);
+        throw new Error("Could not load detection reviews.");
       }
       if (!trainingResponse.ok) {
-        throw new Error(training.detail || `Could not load training status: ${trainingResponse.status}`);
+        throw new Error("Could not load detection reviews.");
       }
       renderDetectorReview(annotations.annotations || [], annotations.counts || {});
       renderDetectorTrainingStatus(training);
     })
     .catch((error) => {
       console.error(error);
-      detectorReviewStatus.textContent = error.message || "Could not load detector training tools.";
+      detectorReviewStatus.textContent = "Could not load detection reviews.";
     })
     .finally(() => {
       detectorReviewRefreshButton.disabled = false;
@@ -3294,9 +3294,12 @@ function renderDetectorReview(annotations, counts) {
   }
   detectorReviewImageUrls = [];
   detectorReviewGrid.replaceChildren();
-  detectorReviewCount.textContent = `${counts.needs_review || 0} pending · ${counts.approved || 0} approved`;
+  const pendingCount = counts.needs_review || 0;
+  detectorReviewCount.textContent = pendingCount
+    ? `${pendingCount} to review`
+    : "";
   detectorReviewStatus.textContent = annotations.length
-    ? "Approve only scans whose final rectangles correctly cover every game box."
+    ? "Only confirm when every visible game box is marked correctly."
     : "No detector corrections are waiting for review.";
   for (const annotation of annotations) {
     detectorReviewGrid.append(createDetectorReviewCard(annotation));
@@ -3309,6 +3312,7 @@ function createDetectorReviewCard(annotation) {
   const body = document.createElement("div");
   const title = document.createElement("strong");
   const meta = document.createElement("div");
+  const legend = document.createElement("div");
   const actions = document.createElement("div");
   const openButton = document.createElement("button");
   const approveButton = document.createElement("button");
@@ -3318,6 +3322,7 @@ function createDetectorReviewCard(annotation) {
   image.className = "contributorReviewImage";
   body.className = "contributorReviewBody";
   meta.className = "contributorReviewMeta";
+  legend.className = "detectorBoxLegend";
   actions.className = "contributorReviewActions";
   actions.classList.add("detectorReviewActions");
   status.className = "contributorReviewItemStatus";
@@ -3325,28 +3330,36 @@ function createDetectorReviewCard(annotation) {
   title.textContent = `Corrected scan ${annotation.annotation_id.slice(0, 8)}`;
   meta.textContent = `${annotation.accepted_boxes?.length || 0} accepted · `
     + `${annotation.manual_boxes?.length || 0} added · ${annotation.removed_boxes?.length || 0} removed`;
+  legend.innerHTML = [
+    '<span><i class="detectorKeepColor"></i>Model: keep</span>',
+    '<span><i class="detectorRemoveColor"></i>Model: remove</span>',
+    '<span><i class="detectorManualColor"></i>Manual: added</span>',
+  ].join("");
   openButton.type = "button";
   approveButton.type = "button";
   rejectButton.type = "button";
-  openButton.textContent = "Open review";
+  openButton.textContent = "Adjust boxes";
   openButton.disabled = true;
-  approveButton.textContent = "Approve";
+  approveButton.textContent = "Review & approve";
   rejectButton.textContent = "Reject";
   status.textContent = "Needs review";
   actions.append(openButton, approveButton, rejectButton);
-  body.append(title, meta, actions, status);
+  body.append(title, meta, legend, actions, status);
   card.append(image, body);
   loadDetectorAnnotationImage(annotation, image, openButton);
-  image.addEventListener("click", () => openCropViewer(image, title.textContent));
-  openButton.addEventListener("click", () => openCropViewer(image, title.textContent));
-  approveButton.addEventListener("click", () => reviewDetectorAnnotation(annotation, "approve", card, status));
+  image.addEventListener("click", () => openDetectorReviewEditor(annotation, card, status));
+  openButton.addEventListener("click", () => openDetectorReviewEditor(annotation, card, status));
+  approveButton.addEventListener("click", () => openDetectorReviewEditor(annotation, card, status));
   rejectButton.addEventListener("click", () => reviewDetectorAnnotation(annotation, "reject", card, status));
   return card;
 }
 
 async function loadDetectorAnnotationImage(annotation, image, openButton) {
   try {
-    const response = await fetch(apiUrl(annotation.image_url, contributorApiBase), {
+    const reviewImageUrl = new URL(apiUrl(annotation.image_url, contributorApiBase));
+    reviewImageUrl.searchParams.set("overlay", "true");
+    const response = await fetch(reviewImageUrl.toString(), {
+      cache: "no-store",
       headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
     });
     if (!response.ok) {
@@ -3363,11 +3376,16 @@ async function loadDetectorAnnotationImage(annotation, image, openButton) {
   }
 }
 
-async function reviewDetectorAnnotation(annotation, action, card, status) {
+async function reviewDetectorAnnotation(annotation, action, card, status, adjustments = null) {
   status.textContent = action === "approve" ? "Approving..." : "Rejecting...";
   const formData = new FormData();
   formData.append("annotation_id", annotation.annotation_id);
   formData.append("action", action);
+  if (adjustments) {
+    formData.append("accepted_boxes", JSON.stringify(adjustments.acceptedBoxes));
+    formData.append("manual_boxes", JSON.stringify(adjustments.manualBoxes));
+    formData.append("removed_boxes", JSON.stringify(adjustments.removedBoxes));
+  }
   try {
     const response = await fetch(apiUrl("/contributor/detector-annotation-review", contributorApiBase), {
       method: "POST",
@@ -3385,24 +3403,235 @@ async function reviewDetectorAnnotation(annotation, action, card, status) {
   }
 }
 
+function detectorReviewBoxesMatch(left, right, tolerance = 0.002) {
+  return ["x", "y", "width", "height"].every(
+    (key) => Math.abs(Number(left?.[key] || 0) - Number(right?.[key] || 0)) <= tolerance,
+  );
+}
+
+async function openDetectorReviewEditor(annotation, card, cardStatus) {
+  const modal = document.createElement("div");
+  const windowElement = document.createElement("section");
+  const header = document.createElement("header");
+  const title = document.createElement("h2");
+  const closeButton = document.createElement("button");
+  const canvasWrap = document.createElement("div");
+  const canvas = document.createElement("canvas");
+  const toolbar = document.createElement("div");
+  const hint = document.createElement("p");
+  const undoButton = document.createElement("button");
+  const cancelButton = document.createElement("button");
+  const approveButton = document.createElement("button");
+  const editorStatus = document.createElement("span");
+  const context = canvas.getContext("2d");
+  const image = new Image();
+  const originalImageUrl = new URL(apiUrl(annotation.image_url, contributorApiBase));
+  originalImageUrl.searchParams.set("overlay", "false");
+  const manualBoxes = structuredClone(annotation.manual_boxes || []);
+  const acceptedSource = Array.isArray(annotation.accepted_boxes)
+    ? annotation.accepted_boxes
+    : (annotation.detector_suggestions || []);
+  const modelBoxes = structuredClone(acceptedSource.filter(
+    (box) => !manualBoxes.some((manual) => detectorReviewBoxesMatch(box, manual)),
+  ));
+  const removedBoxes = structuredClone(annotation.removed_boxes || []);
+  const history = [];
+  let draftStart = null;
+  let draftBox = null;
+
+  modal.className = "detectorReviewEditorOverlay";
+  windowElement.className = "detectorReviewEditorWindow";
+  header.className = "detectorReviewEditorHeader";
+  title.textContent = "Adjust detection boxes";
+  closeButton.type = "button";
+  closeButton.className = "ghostButton";
+  closeButton.textContent = "Close";
+  canvasWrap.className = "detectorReviewEditorCanvasWrap";
+  canvas.className = "detectorReviewEditorCanvas";
+  toolbar.className = "detectorReviewEditorToolbar";
+  hint.innerHTML = "<strong>Only confirm when every visible game box is marked.</strong> "
+    + "Drag empty space to add a box. Tap a green or red box to switch between keep and remove. "
+    + "Tap a yellow box to delete it.";
+  undoButton.type = "button";
+  cancelButton.type = "button";
+  approveButton.type = "button";
+  undoButton.textContent = "Undo";
+  cancelButton.textContent = "Cancel";
+  approveButton.textContent = "Approve corrections";
+  undoButton.disabled = true;
+  editorStatus.className = "detectorReviewEditorStatus";
+  toolbar.append(undoButton, cancelButton, approveButton, editorStatus);
+  header.append(title, closeButton);
+  canvasWrap.append(canvas);
+  windowElement.append(header, hint, canvasWrap, toolbar);
+  modal.append(windowElement);
+  document.body.append(modal);
+
+  const close = () => {
+    URL.revokeObjectURL(image.src);
+    modal.remove();
+  };
+  const snapshot = () => {
+    history.push({
+      model: structuredClone(modelBoxes),
+      manual: structuredClone(manualBoxes),
+      removed: structuredClone(removedBoxes),
+    });
+    undoButton.disabled = false;
+  };
+  const drawBox = (box, color, lineWidth) => {
+    context.strokeStyle = color;
+    context.lineWidth = lineWidth;
+    context.strokeRect(
+      box.x * canvas.width,
+      box.y * canvas.height,
+      box.width * canvas.width,
+      box.height * canvas.height,
+    );
+  };
+  const redraw = () => {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const lineWidth = Math.max(3, Math.round(Math.min(canvas.width, canvas.height) / 180));
+    modelBoxes.forEach((box) => drawBox(box, "#32d583", lineWidth));
+    removedBoxes.forEach((box) => drawBox(box, "#ff3b30", lineWidth));
+    manualBoxes.forEach((box) => drawBox(box, "#ffd60a", lineWidth));
+    if (draftBox) {
+      drawBox(draftBox, "#ffd60a", lineWidth);
+    }
+  };
+  const pointFromEvent = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    };
+  };
+  const containsPoint = (box, point) => (
+    point.x >= box.x && point.x <= box.x + box.width
+    && point.y >= box.y && point.y <= box.y + box.height
+  );
+  const toggleAtPoint = (point) => {
+    let index = manualBoxes.findLastIndex((box) => containsPoint(box, point));
+    if (index >= 0) {
+      snapshot();
+      manualBoxes.splice(index, 1);
+      return true;
+    }
+    index = modelBoxes.findLastIndex((box) => containsPoint(box, point));
+    if (index >= 0) {
+      snapshot();
+      removedBoxes.push(modelBoxes.splice(index, 1)[0]);
+      return true;
+    }
+    index = removedBoxes.findLastIndex((box) => containsPoint(box, point));
+    if (index >= 0) {
+      snapshot();
+      modelBoxes.push(removedBoxes.splice(index, 1)[0]);
+      return true;
+    }
+    return false;
+  };
+
+  closeButton.addEventListener("click", close);
+  cancelButton.addEventListener("click", close);
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) close();
+  });
+  undoButton.addEventListener("click", () => {
+    const previous = history.pop();
+    if (!previous) return;
+    modelBoxes.splice(0, modelBoxes.length, ...previous.model);
+    manualBoxes.splice(0, manualBoxes.length, ...previous.manual);
+    removedBoxes.splice(0, removedBoxes.length, ...previous.removed);
+    undoButton.disabled = history.length === 0;
+    redraw();
+  });
+  canvas.addEventListener("pointerdown", (event) => {
+    draftStart = pointFromEvent(event);
+    draftBox = null;
+    canvas.setPointerCapture?.(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!draftStart) return;
+    const point = pointFromEvent(event);
+    draftBox = {
+      x: Math.min(draftStart.x, point.x),
+      y: Math.min(draftStart.y, point.y),
+      width: Math.abs(point.x - draftStart.x),
+      height: Math.abs(point.y - draftStart.y),
+    };
+    redraw();
+  });
+  canvas.addEventListener("pointerup", (event) => {
+    if (!draftStart) return;
+    const point = pointFromEvent(event);
+    const candidate = draftBox;
+    draftStart = null;
+    draftBox = null;
+    if (candidate && candidate.width >= 0.015 && candidate.height >= 0.015) {
+      snapshot();
+      manualBoxes.push({ ...candidate, source: "manual", class_id: 0 });
+    } else {
+      toggleAtPoint(point);
+    }
+    redraw();
+  });
+  approveButton.addEventListener("click", async () => {
+    approveButton.disabled = true;
+    editorStatus.textContent = "Saving corrections...";
+    const acceptedBoxes = [...modelBoxes, ...manualBoxes];
+    await reviewDetectorAnnotation(annotation, "approve", card, cardStatus, {
+      acceptedBoxes,
+      manualBoxes,
+      removedBoxes,
+    });
+    if (!card.isConnected) {
+      close();
+    } else {
+      approveButton.disabled = false;
+      editorStatus.textContent = cardStatus.textContent;
+    }
+  });
+
+  try {
+    const response = await fetch(originalImageUrl.toString(), {
+      cache: "no-store",
+      headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
+    });
+    if (!response.ok) throw new Error("Review image could not be loaded.");
+    image.src = URL.createObjectURL(await response.blob());
+    await image.decode();
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    redraw();
+  } catch (error) {
+    editorStatus.textContent = error.message || "Review image could not be loaded.";
+    approveButton.disabled = true;
+  }
+}
+
 function renderDetectorTrainingStatus(training) {
   const job = training.job || { status: "idle" };
   const running = ["preparing", "evaluating_baseline", "training", "evaluating", "exporting"]
     .includes(job.status);
   startDetectorTrainingButton.disabled = !training.ready || running;
+  startDetectorTrainingButton.hidden = !training.ready && !running;
+  detectorTrainingStatus.hidden = false;
   if (running) {
-    detectorTrainingStatus.textContent = `Candidate job: ${job.status}.`;
+    detectorTrainingStatus.textContent = "Model training is in progress.";
   } else if (job.status === "completed") {
-    const metrics = job.metrics || {};
     detectorTrainingStatus.textContent = job.candidate_improved
-      ? `Candidate beat the baseline and awaits manual review · mAP50 ${Number(metrics.map50 || 0).toFixed(3)}.`
-      : `Candidate did not beat the baseline · mAP50 ${Number(metrics.map50 || 0).toFixed(3)}.`;
+      ? "A trained model is ready for review."
+      : "Model training finished.";
   } else if (job.status === "failed") {
-    detectorTrainingStatus.textContent = `Last candidate failed: ${job.error || "Unknown error"}`;
+    detectorTrainingStatus.textContent = "Model training could not be completed.";
   } else if (!training.ready) {
-    detectorTrainingStatus.textContent = (training.reasons || []).join(" · ");
+    detectorTrainingStatus.textContent = "";
+    detectorTrainingStatus.hidden = true;
   } else {
-    detectorTrainingStatus.textContent = "Enough reviewed data is available to train an isolated candidate.";
+    detectorTrainingStatus.textContent = "";
+    detectorTrainingStatus.hidden = true;
   }
 }
 
@@ -3420,7 +3649,9 @@ async function startDetectorTraining() {
     }
     detectorTrainingStatus.textContent = "Candidate training started. Refresh to check progress.";
   } catch (error) {
-    detectorTrainingStatus.textContent = error.message || "Could not start candidate training.";
+    console.error(error);
+    detectorTrainingStatus.hidden = false;
+    detectorTrainingStatus.textContent = "Model training could not be started.";
   } finally {
     loadDetectorReview({ force: true });
   }
