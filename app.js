@@ -22,9 +22,11 @@ const SCORE_THRESHOLD_EPSILON = 0.0005;
 const MAX_CORRECTION_SUGGESTIONS = 5;
 const CONTRIBUTOR_RECENT_REFERENCE_LIMIT = 30;
 const CONTRIBUTOR_REVIEW_TIMEOUT_MS = 15000;
-const CARD_DISMISS_MIN_DISTANCE = 86;
-const CARD_DISMISS_MAX_DISTANCE = 150;
-const CARD_DISMISS_RATIO = 0.32;
+const CARD_DISMISS_MIN_DISTANCE = 58;
+const CARD_DISMISS_MAX_DISTANCE = 105;
+const CARD_DISMISS_RATIO = 0.23;
+const CARD_DISMISS_FLICK_MIN_DISTANCE = 32;
+const CARD_DISMISS_FLICK_VELOCITY = 0.45;
 const CROP_ZOOM_MAX_SIDE = 420;
 const CROP_ZOOM_MIN_SIDE = 220;
 const CROP_VIEWER_MIN_ZOOM = 0.25;
@@ -2140,6 +2142,7 @@ function enableSwipeDismiss(cardApi) {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      startTime: event.timeStamp,
       dx: 0,
       dragging: false,
     };
@@ -2162,7 +2165,7 @@ function enableSwipeDismiss(cardApi) {
         return;
       }
 
-      if (absY > absX) {
+      if (absY > absX * 1.25) {
         resetSwipeGesture(card, gesture.pointerId);
         gesture = null;
         return;
@@ -2234,9 +2237,13 @@ function finishSwipeDismiss(cardApi, gesture, event, allowDismiss) {
     return;
   }
 
+  const distance = Math.abs(gesture.dx);
+  const elapsed = Math.max(1, event.timeStamp - gesture.startTime);
+  const wasQuickFlick = distance >= CARD_DISMISS_FLICK_MIN_DISTANCE
+    && distance / elapsed >= CARD_DISMISS_FLICK_VELOCITY;
   const shouldDismiss = allowDismiss
     && gesture.dragging
-    && Math.abs(gesture.dx) >= swipeDismissThreshold(cardApi.card);
+    && (distance >= swipeDismissThreshold(cardApi.card) || wasQuickFlick);
 
   releaseSwipePointer(cardApi.card, gesture.pointerId);
 
