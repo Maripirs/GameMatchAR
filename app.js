@@ -143,6 +143,9 @@ let modifierZoom = 1;
 let modifierPanX = 0;
 let modifierPanY = 0;
 let modifierGestureStartZoom = 1;
+const modifierTouchPointers = new Map();
+const modifierSuppressedTouchPointers = new Set();
+let modifierTouchGesture = null;
 
 initThemeControl();
 setControlsEnabled(false);
@@ -192,10 +195,10 @@ window.addEventListener("resize", () => {
   hideCropZoomPreview();
   redrawActiveDetections();
 });
-boxesCanvas.addEventListener("pointerdown", startManualBox);
-boxesCanvas.addEventListener("pointermove", moveManualBox);
-boxesCanvas.addEventListener("pointerup", finishManualBox);
-boxesCanvas.addEventListener("pointercancel", cancelManualBox);
+boxesCanvas.addEventListener("pointerdown", handleModifierPointerDown);
+boxesCanvas.addEventListener("pointermove", handleModifierPointerMove);
+boxesCanvas.addEventListener("pointerup", handleModifierPointerUp);
+boxesCanvas.addEventListener("pointercancel", handleModifierPointerCancel);
 document.addEventListener("wheel", scrollModifierImage, { passive: false });
 document.addEventListener("gesturestart", startModifierPinch, { passive: false });
 document.addEventListener("gesturechange", changeModifierPinch, { passive: false });
@@ -543,6 +546,7 @@ function beginManualBoxMode() {
   manualBoxMode = true;
   manualBoxGesture = null;
   manualDraftDetection = null;
+  resetModifierTouchGesture();
   modifierZoom = 1;
   modifierPanX = 0;
   modifierPanY = 0;
@@ -557,6 +561,7 @@ function endManualBoxMode() {
   manualBoxMode = false;
   manualBoxGesture = null;
   manualDraftDetection = null;
+  resetModifierTouchGesture();
   modifierZoom = 1;
   modifierPanX = 0;
   modifierPanY = 0;
@@ -692,6 +697,146 @@ function applyModifierZoom() {
   document.documentElement.style.setProperty("--modifier-pan-y", `${modifierPanY}px`);
   zoomOutButton.disabled = !manualBoxMode || modifierZoom <= 0.5;
   zoomInButton.disabled = !manualBoxMode || modifierZoom >= 3;
+}
+
+function handleModifierPointerDown(event) {
+  if (event.pointerType !== "touch") {
+    startManualBox(event);
+    return;
+  }
+  modifierTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  boxesCanvas.setPointerCapture?.(event.pointerId);
+  if (modifierTouchPointers.size >= 2) {
+    beginModifierTouchGesture();
+    event.preventDefault();
+    return;
+  }
+  startManualBox(event);
+}
+
+function handleModifierPointerMove(event) {
+  if (event.pointerType !== "touch" || !modifierTouchPointers.has(event.pointerId)) {
+    moveManualBox(event);
+    return;
+  }
+  modifierTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (modifierTouchGesture && modifierTouchPointers.size >= 2) {
+    updateModifierTouchGesture();
+    event.preventDefault();
+    return;
+  }
+  if (!modifierSuppressedTouchPointers.has(event.pointerId)) {
+    moveManualBox(event);
+  }
+}
+
+function handleModifierPointerUp(event) {
+  if (event.pointerType !== "touch") {
+    finishManualBox(event);
+    return;
+  }
+  const suppressed = modifierSuppressedTouchPointers.has(event.pointerId);
+  if (modifierTouchPointers.has(event.pointerId)) {
+    modifierTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  }
+  modifierTouchPointers.delete(event.pointerId);
+  modifierSuppressedTouchPointers.delete(event.pointerId);
+  if (modifierTouchPointers.size < 2) {
+    modifierTouchGesture = null;
+  }
+  if (suppressed) {
+    manualBoxGesture = null;
+    manualDraftDetection = null;
+    redrawActiveDetections();
+    boxesCanvas.releasePointerCapture?.(event.pointerId);
+    event.preventDefault();
+    return;
+  }
+  finishManualBox(event);
+}
+
+function handleModifierPointerCancel(event) {
+  modifierTouchPointers.delete(event.pointerId);
+  modifierSuppressedTouchPointers.delete(event.pointerId);
+  if (modifierTouchPointers.size < 2) {
+    modifierTouchGesture = null;
+  }
+  cancelManualBox(event);
+}
+
+function beginModifierTouchGesture() {
+  const points = Array.from(modifierTouchPointers.entries()).slice(0, 2);
+  const geometry = modifierTouchGeometry(points);
+  if (!geometry) {
+    return;
+  }
+  for (const [pointerId] of points) {
+    modifierSuppressedTouchPointers.add(pointerId);
+  }
+  manualBoxGesture = null;
+  manualDraftDetection = null;
+  modifierTouchGesture = {
+    pointerIds: points.map(([pointerId]) => pointerId),
+    startDistance: geometry.distance,
+    startCenterX: geometry.centerX,
+    startCenterY: geometry.centerY,
+    startZoom: modifierZoom,
+    startPanX: modifierPanX,
+    startPanY: modifierPanY,
+  };
+  redrawActiveDetections();
+}
+
+function updateModifierTouchGesture() {
+  const gesture = modifierTouchGesture;
+  if (!gesture) {
+    return;
+  }
+  const points = gesture.pointerIds
+    .map((pointerId) => [pointerId, modifierTouchPointers.get(pointerId)])
+    .filter(([, point]) => point);
+  const geometry = modifierTouchGeometry(points);
+  if (!geometry || !gesture.startDistance) {
+    return;
+  }
+  const nextZoom = Math.max(
+    0.5,
+    Math.min(3, gesture.startZoom * geometry.distance / gesture.startDistance),
+  );
+  const viewport = boxesCanvas.getBoundingClientRect();
+  const viewportCenterX = viewport.left + viewport.width / 2;
+  const viewportCenterY = viewport.top + viewport.height / 2;
+  const zoomRatio = nextZoom / gesture.startZoom;
+  modifierZoom = nextZoom;
+  modifierPanX = clampModifierPanX(
+    geometry.centerX - viewportCenterX
+      - zoomRatio * (gesture.startCenterX - viewportCenterX - gesture.startPanX),
+  );
+  modifierPanY = clampModifierPanY(
+    geometry.centerY - viewportCenterY
+      - zoomRatio * (gesture.startCenterY - viewportCenterY - gesture.startPanY),
+  );
+  applyModifierZoom();
+  redrawActiveDetections();
+}
+
+function modifierTouchGeometry(points) {
+  if (points.length < 2 || !points[0][1] || !points[1][1]) {
+    return null;
+  }
+  const first = points[0][1];
+  const second = points[1][1];
+  return {
+    centerX: (first.x + second.x) / 2,
+    centerY: (first.y + second.y) / 2,
+    distance: Math.hypot(second.x - first.x, second.y - first.y),
+  };
+}
+
+function resetModifierTouchGesture() {
+  modifierTouchPointers.clear();
+  modifierSuppressedTouchPointers.clear();
+  modifierTouchGesture = null;
 }
 
 function startManualBox(event) {
@@ -4761,6 +4906,7 @@ function clearResults(cancelActiveScan = true) {
   manualBoxMode = false;
   manualBoxGesture = null;
   manualDraftDetection = null;
+  resetModifierTouchGesture();
   modifierZoom = 1;
   modifierPanX = 0;
   modifierPanY = 0;
