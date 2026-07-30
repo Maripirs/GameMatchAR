@@ -4543,7 +4543,7 @@ function redrawActiveDetections() {
 }
 
 function drawDetections(detections, sourceCanvas, displayElement, selectedDetection = null, selectedLabel = "") {
-  const displayRect = displayElement.getBoundingClientRect();
+  const displayRect = boxesCanvas.getBoundingClientRect();
   const displayWidth = displayRect.width;
   const displayHeight = displayRect.height;
   const sourceWidth = sourceCanvas.width;
