@@ -3310,6 +3310,7 @@ function createDetectorReviewCard(annotation) {
   const title = document.createElement("strong");
   const meta = document.createElement("div");
   const actions = document.createElement("div");
+  const openButton = document.createElement("button");
   const approveButton = document.createElement("button");
   const rejectButton = document.createElement("button");
   const status = document.createElement("div");
@@ -3324,22 +3325,26 @@ function createDetectorReviewCard(annotation) {
   title.textContent = `Corrected scan ${annotation.annotation_id.slice(0, 8)}`;
   meta.textContent = `${annotation.accepted_boxes?.length || 0} accepted · `
     + `${annotation.manual_boxes?.length || 0} added · ${annotation.removed_boxes?.length || 0} removed`;
+  openButton.type = "button";
   approveButton.type = "button";
   rejectButton.type = "button";
+  openButton.textContent = "Open review";
+  openButton.disabled = true;
   approveButton.textContent = "Approve";
   rejectButton.textContent = "Reject";
   status.textContent = "Needs review";
-  actions.append(approveButton, rejectButton);
+  actions.append(openButton, approveButton, rejectButton);
   body.append(title, meta, actions, status);
   card.append(image, body);
-  loadDetectorAnnotationImage(annotation, image);
+  loadDetectorAnnotationImage(annotation, image, openButton);
   image.addEventListener("click", () => openCropViewer(image, title.textContent));
+  openButton.addEventListener("click", () => openCropViewer(image, title.textContent));
   approveButton.addEventListener("click", () => reviewDetectorAnnotation(annotation, "approve", card, status));
   rejectButton.addEventListener("click", () => reviewDetectorAnnotation(annotation, "reject", card, status));
   return card;
 }
 
-async function loadDetectorAnnotationImage(annotation, image) {
+async function loadDetectorAnnotationImage(annotation, image, openButton) {
   try {
     const response = await fetch(apiUrl(annotation.image_url, contributorApiBase), {
       headers: { [CONTRIBUTOR_PASSWORD_HEADER]: contributorPassword },
@@ -3350,6 +3355,8 @@ async function loadDetectorAnnotationImage(annotation, image) {
     const url = URL.createObjectURL(await response.blob());
     detectorReviewImageUrls.push(url);
     image.src = url;
+    await image.decode?.().catch(() => {});
+    openButton.disabled = false;
   } catch (error) {
     console.warn(error);
     image.classList.add("loadFailed");

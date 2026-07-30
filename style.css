@@ -868,6 +868,10 @@ body.imagePreview #controls {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.detectorReviewActions button:first-child {
+  grid-column: 1 / -1;
+}
+
 #detectorReviewPanel {
   display: grid;
   gap: 10px;
