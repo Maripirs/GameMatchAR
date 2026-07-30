@@ -4537,8 +4537,8 @@ function redrawActiveDetections() {
     detections,
     activeSourceCanvas,
     activeDisplayElement,
-    selectedMatchCard?.detection || null,
-    selectedMatchCard?.matches?.[0]?.name || ""
+    manualBoxMode ? null : selectedMatchCard?.detection || null,
+    manualBoxMode ? "" : selectedMatchCard?.matches?.[0]?.name || ""
   );
 }
 
