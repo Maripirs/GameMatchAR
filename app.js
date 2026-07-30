@@ -11,6 +11,9 @@ const GAME_OBSCURE_DETAILS_URL = "./data/game_details_obscure.json";
 const PLAYER_EXPANSION_INDEX_URL = "./data/player_expansion_index.json";
 const GAME_SEARCH_INDEX_URL = "./data/games_index.json";
 const GAME_ALIASES_URL = "./data/game_aliases.json";
+const CATALOG_DETAILS_PATH = "/catalog/details";
+const CATALOG_PLAYER_EXPANSIONS_PATH = "/catalog/player-expansions";
+const CATALOG_SEARCH_INDEX_PATH = "/catalog/search-index";
 const BACKEND_MATCH_TIMEOUT_MS = 20000;
 const BACKEND_HEALTH_TIMEOUT_MS = 5000;
 const DETAIL_SCORE_THRESHOLD = 0.775;
@@ -2706,13 +2709,10 @@ function clampNumber(value, min, max) {
 
 async function loadGameDetails() {
   try {
-    const response = await fetch(GAME_DETAILS_URL, { cache: "no-store" });
-
-    if (!response.ok) {
-      throw new Error(`Could not load game details: ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchCatalogPayload(
+      `${CATALOG_DETAILS_PATH}?tier=core`,
+      GAME_DETAILS_URL
+    );
     gameDetailsById = new Map();
     const loadedCount = mergeGameDetailPayload(payload);
 
@@ -2741,13 +2741,10 @@ function ensurePlayerExpansionIndexLoaded() {
 
 async function loadPlayerExpansionIndex() {
   try {
-    const response = await fetch(PLAYER_EXPANSION_INDEX_URL, { cache: "no-store" });
-
-    if (!response.ok) {
-      throw new Error(`Could not load player expansion index: ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchCatalogPayload(
+      CATALOG_PLAYER_EXPANSIONS_PATH,
+      PLAYER_EXPANSION_INDEX_URL
+    );
     playerExpansionIndex = parsePlayerExpansionIndex(payload);
     console.log(`Loaded ${playerExpansionIndex.size} player expansion override records.`);
 
@@ -2858,13 +2855,10 @@ async function ensureObscureGameDetailsLoaded() {
 
 async function loadObscureGameDetails() {
   try {
-    const response = await fetch(GAME_OBSCURE_DETAILS_URL, { cache: "no-store" });
-
-    if (!response.ok) {
-      throw new Error(`Could not load obscure game details: ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchCatalogPayload(
+      `${CATALOG_DETAILS_PATH}?tier=obscure`,
+      GAME_OBSCURE_DETAILS_URL
+    );
     const loadedCount = mergeGameDetailPayload(payload);
     obscureGameDetailsLoaded = true;
     console.log(`Loaded ${loadedCount} obscure game detail records.`);
@@ -2906,17 +2900,29 @@ async function loadGameSearchIndex() {
   await ensureGameDetailsLoaded();
 
   try {
-    const [response, aliasesResponse] = await Promise.all([
-      fetch(GAME_SEARCH_INDEX_URL, { cache: "no-store" }),
-      fetch(GAME_ALIASES_URL, { cache: "no-store" }),
-    ]);
-
-    if (!response.ok) {
-      throw new Error(`Could not load game search index: ${response.status}`);
+    let payload;
+    let aliasesById = {};
+    try {
+      const response = await fetch(
+        apiUrl(CATALOG_SEARCH_INDEX_PATH, contributorApiBase),
+        { cache: "no-store" }
+      );
+      if (!response.ok) {
+        throw new Error(`Backend catalog returned ${response.status}`);
+      }
+      payload = await response.json();
+    } catch (backendError) {
+      console.warn("Backend search catalog unavailable; using bundled fallback:", backendError);
+      const [response, aliasesResponse] = await Promise.all([
+        fetch(GAME_SEARCH_INDEX_URL, { cache: "no-store" }),
+        fetch(GAME_ALIASES_URL, { cache: "no-store" }),
+      ]);
+      if (!response.ok) {
+        throw new Error(`Could not load game search index: ${response.status}`);
+      }
+      payload = await response.json();
+      aliasesById = aliasesResponse.ok ? await aliasesResponse.json() : {};
     }
-
-    const payload = await response.json();
-    const aliasesById = aliasesResponse.ok ? await aliasesResponse.json() : {};
     const records = Array.isArray(payload)
       ? payload
       : Object.values(payload);
@@ -2936,6 +2942,25 @@ async function loadGameSearchIndex() {
 
   gameSearchById = new Map(gameSearchIndex.map((game) => [Number(game.id), game]));
   console.log(`Loaded ${gameSearchIndex.length} searchable game names.`);
+}
+
+async function fetchCatalogPayload(backendPath, fallbackUrl) {
+  try {
+    const response = await fetch(apiUrl(backendPath, contributorApiBase), {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`Backend catalog returned ${response.status}`);
+    }
+    return await response.json();
+  } catch (backendError) {
+    console.warn(`Backend catalog unavailable for ${backendPath}; using bundled fallback:`, backendError);
+    const fallbackResponse = await fetch(fallbackUrl, { cache: "no-store" });
+    if (!fallbackResponse.ok) {
+      throw new Error(`Could not load fallback catalog: ${fallbackResponse.status}`);
+    }
+    return await fallbackResponse.json();
+  }
 }
 
 function normalizeGameSearchRecord(game) {
