@@ -251,10 +251,33 @@
   <script>
     {
       const hostedHosts = new Set(["gamematch.maripi.net", "www.gamematch.maripi.net"]);
-      window.GAMEMATCH_API_BASE =
-        hostedHosts.has(window.location.hostname) || window.location.hostname.endsWith(".github.io")
-          ? "https://api.maripi.net"
-          : "";
+      const host = window.location.hostname;
+      const isHosted = hostedHosts.has(host) || host.endsWith(".github.io");
+      const isLocal = /^(localhost|127\.0\.0\.1|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+
+      let base = isHosted ? "https://api.maripi.net" : "";
+
+      // Local development only: ?api=<url> points the page at another backend
+      // and is remembered until cleared with ?api=. Deliberately ignored on the
+      // hosted site -- there, a crafted link could otherwise redirect uploaded
+      // photos to an arbitrary host.
+      if (isLocal) {
+        try {
+          const requested = new URLSearchParams(window.location.search).get("api");
+          if (requested !== null) {
+            if (requested) {
+              localStorage.setItem("gamematchApiBase", requested);
+            } else {
+              localStorage.removeItem("gamematchApiBase");
+            }
+          }
+          base = localStorage.getItem("gamematchApiBase") || base;
+        } catch (error) {
+          console.warn("Could not read the API base override:", error);
+        }
+      }
+
+      window.GAMEMATCH_API_BASE = base;
     }
   </script>
   <script type="module" src="app.js?v=20260730-catalog1"></script>
