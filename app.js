@@ -25,11 +25,6 @@ const SCORE_THRESHOLD_EPSILON = 0.0005;
 const MAX_CORRECTION_SUGGESTIONS = 5;
 const CONTRIBUTOR_RECENT_REFERENCE_LIMIT = 30;
 const CONTRIBUTOR_REVIEW_TIMEOUT_MS = 15000;
-const CARD_DISMISS_MIN_DISTANCE = 36;
-const CARD_DISMISS_MAX_DISTANCE = 70;
-const CARD_DISMISS_RATIO = 0.15;
-const CARD_DISMISS_FLICK_MIN_DISTANCE = 20;
-const CARD_DISMISS_FLICK_VELOCITY = 0.25;
 const CROP_ZOOM_MAX_SIDE = 420;
 const CROP_ZOOM_MIN_SIDE = 220;
 const CROP_VIEWER_MIN_ZOOM = 0.25;
@@ -69,7 +64,6 @@ const exampleButtons = Array.from(document.querySelectorAll("[data-example-src]"
 const playersFilter = document.getElementById("playersFilter");
 const timeFilter = document.getElementById("timeFilter");
 const complexityFilter = document.getElementById("complexityFilter");
-const filterSummary = document.getElementById("filterSummary");
 const filterVisibilityButton = document.getElementById("filterVisibilityButton");
 const applyFiltersButton = document.getElementById("applyFiltersButton");
 const advancedFilterToggle = document.getElementById("advancedFilterToggle");
@@ -189,7 +183,6 @@ let filterPanelDismissedByUser = false;
 
 initThemeControl();
 setControlsEnabled(false);
-updateFilterSummary();
 video.hidden = true;
 
 main();
@@ -237,12 +230,11 @@ startDetectorTrainingButton.addEventListener("click", startDetectorTraining);
   control.addEventListener("change", handleFilterChange);
 });
 applyFiltersButton.addEventListener("click", closeFilterPanel);
-// Filters lead on first load, so the panel starts open on every screen. The
-// summary has to be primed too, since the controls ship with default values.
+// Filters lead on first load, so the panel starts open on every screen.
 setFilterPanelOpen(true);
-updateFilterSummary();
 window.addEventListener("resize", () => {
   hideCropZoomPreview();
+  syncTopPanelHeight();
   redrawActiveDetections();
 });
 boxesCanvas.addEventListener("click", handleDetectionTap);
@@ -437,11 +429,13 @@ async function scanExampleImage(button) {
   }
 
   clearResults();
+  resetMockMatchCursor();
   setControlsEnabled(false);
   setStatus(`Loading ${label}...`);
 
   try {
     await drawImageUrlToCanvas(src, photoPreview);
+    rememberMockSource(photoPreview, src);
     activeSourceCanvas = photoPreview;
     activeDisplayElement = photoPreview;
     showPhotoPreview();
@@ -535,7 +529,7 @@ async function processImageCanvas(sourceCanvas, displayElement) {
       }
 
       try {
-        const matches = await matchCrop(card.cropCanvas, (text) => card.setPending(text));
+        const matches = await matchCrop(card.cropCanvas, (text) => card.setPending(text), card.detection);
 
         if (token !== scanToken || card.dismissed) {
           return;
@@ -623,6 +617,10 @@ function beginManualBoxMode() {
   applyModifierZoom();
   setControlsEnabled(true);
   hideResultsPanel();
+  // Hiding the strip gives the photo the full height back, so the overlay has
+  // to be remeasured against the new box or the boxes sit where the photo used
+  // to be.
+  requestAnimationFrame(redrawActiveDetections);
   setStatus("Drag to add a missed box, or tap an existing box to adjust it.");
 }
 
@@ -643,7 +641,9 @@ function endManualBoxMode() {
   boxesCanvas.style.cursor = "";
   applyModifierZoom();
   setControlsEnabled(true);
-  redrawActiveDetections();
+  showResultsPanel();
+  // Same in reverse: the strip returns and the photo shrinks again.
+  requestAnimationFrame(redrawActiveDetections);
   setStatus("Finished modifying boxes.");
 }
 
@@ -742,7 +742,7 @@ async function suggestDinoBoxes() {
         return;
       }
       try {
-        const matches = await matchCrop(card.cropCanvas, (text) => card.setPending(text));
+        const matches = await matchCrop(card.cropCanvas, (text) => card.setPending(text), card.detection);
         if (card.dismissed) {
           return;
         }
@@ -1548,7 +1548,7 @@ async function addManualDetection(detection) {
 
   try {
     await ensureBackendMatcherReady({ force: true });
-    const matches = await matchCrop(card.cropCanvas, (text) => card.setPending(text));
+    const matches = await matchCrop(card.cropCanvas, (text) => card.setPending(text), card.detection);
     await Promise.all([
       ensureGameDetailsLoaded(),
       ensurePlayerExpansionIndexLoaded(),
@@ -1701,7 +1701,75 @@ function ensureBackendMatcherReady({ force = false } = {}) {
   return backendMatcherLoadPromise;
 }
 
-async function matchCrop(cropCanvas, setPending) {
+// Development aid: canned matches for the bundled example photos, so UI work
+// does not require a round trip and a confirm/deny pass on every reload. Enabled
+// with ?mock=1 and only honoured on localhost -- see the guard in index.html.
+const MOCK_MATCHES = {
+  // Listed top to bottom as they sit in the photo.
+  "game-bag": [
+    { id: 315631, name: "Santorini: New York", score: 0.94 },
+    { id: 334065, name: "Verdant", score: 0.93 },
+    { id: 201808, name: "Clank!: A Deck-Building Adventure", score: 0.92 },
+    { id: 325698, name: "Juicy Fruits", score: 0.91 },
+    { id: 340677, name: "Bad Company", score: 0.9 },
+  ],
+  "game-shelf": [
+    { id: 295486, name: "My City", score: 0.92 },
+    { id: 230802, name: "Azul", score: 0.91 },
+    { id: 122515, name: "Kingsburg", score: 0.9 },
+    { id: 284083, name: "Whistle Mountain", score: 0.89 },
+  ],
+};
+
+let mockMatchCursor = 0;
+
+function mockMatchesEnabled() {
+  return Boolean(window.GAMEMATCH_MOCK_MATCHES);
+}
+
+function resetMockMatchCursor() {
+  mockMatchCursor = 0;
+}
+
+function mockMatchFor(sourceLabel, detection = null) {
+  const key = Object.keys(MOCK_MATCHES).find((name) => (sourceLabel || "").includes(name));
+  const pool = MOCK_MATCHES[key] || MOCK_MATCHES["game-bag"];
+
+  // Fixtures are listed in the order the games appear down the photo, so a box
+  // is matched by its vertical rank. Crops are processed concurrently, and that
+  // order has nothing to do with where the boxes actually are.
+  let index = mockMatchCursor % pool.length;
+  const detections = activeSourceCanvas?.lastDetections;
+
+  if (detection && Array.isArray(detections)) {
+    const ordered = [...detections].sort((a, b) => a.y - b.y);
+    const rank = ordered.indexOf(detection);
+
+    if (rank >= 0) {
+      index = rank % pool.length;
+    }
+  }
+
+  mockMatchCursor += 1;
+  const entry = pool[index];
+
+  return [{
+    id: entry.id,
+    name: entry.name,
+    score: entry.score,
+    rank_score: entry.score,
+    source: "bgg_cover",
+    reference_image_path: "",
+  }];
+}
+
+async function matchCrop(cropCanvas, setPending, detection = null) {
+  if (mockMatchesEnabled()) {
+    setPending("Matching (mock)...");
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+    return mockMatchFor(activeSourceCanvas?.mockSourceLabel || "", detection);
+  }
+
   setPending("Matching on server...");
   await ensureBackendMatcherReady();
   return matchCropWithBackend(cropCanvas);
@@ -1808,6 +1876,8 @@ function createMatchCard(cropCanvas, detection, index) {
   const paligemmaHint = document.createElement("div");
   const fit = document.createElement("div");
   const details = document.createElement("div");
+  const expandButton = document.createElement("button");
+  const reportWrongButton = document.createElement("button");
   const findGameButton = document.createElement("button");
   const feedbackActions = document.createElement("div");
   const confirmButton = document.createElement("button");
@@ -1913,7 +1983,14 @@ function createMatchCard(cropCanvas, detection, index) {
     correctionStatus,
   );
   feedbackActions.append(confirmButton, denyButton, feedbackStatus);
-  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, findGameButton, feedbackActions, correctionPanel);
+  reportWrongButton.className = "cardReportWrongButton";
+  reportWrongButton.type = "button";
+  reportWrongButton.textContent = "Report wrong match";
+  expandButton.className = "cardExpandButton";
+  expandButton.type = "button";
+  expandButton.textContent = "See more";
+  expandButton.setAttribute("aria-expanded", "false");
+  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, findGameButton, feedbackActions, reportWrongButton, correctionPanel, expandButton);
   card.append(dismissButton, cropCanvas, body);
   card.tabIndex = 0;
   card.setAttribute("aria-label", `Highlight box ${index + 1} in the photo`);
@@ -2110,6 +2187,15 @@ function createMatchCard(cropCanvas, detection, index) {
 
       this.fitsFilters = result.fits;
       this.filterClassName = result.className;
+
+      // Nothing to expand into unless the match is confident enough for
+      // renderGameDetails to have produced any details.
+      card.dataset.confident = this.isConfident ? "yes" : "no";
+
+      const checks = this.checks || {};
+      card.dataset.checkPlayers = checks.players || "off";
+      card.dataset.checkTime = checks.time || "off";
+      card.dataset.checkWeight = checks.weight || "off";
       card.dataset.fit = result.rank;
       card.classList.toggle("recommended", result.className === "yes");
       card.classList.toggle("conditional", result.className === "conditional");
@@ -2128,6 +2214,7 @@ function createMatchCard(cropCanvas, detection, index) {
     }
 
     selectMatchCard(cardApi);
+    pulseDetection(cardApi.detection);
   });
   card.addEventListener("keydown", (event) => {
     if (
@@ -2144,16 +2231,32 @@ function createMatchCard(cropCanvas, detection, index) {
   denyButton.addEventListener("click", () => submitRecognitionFeedback(cardApi, "deny"));
   dismissButton.addEventListener("click", () => dismissMatchCard(cardApi, 1));
   findGameButton.addEventListener("click", () => {
-    // Reveal the photo first, then pulse -- pulsing behind a panel that still
-    // covers the photo would play to nobody.
-    hideResultsPanel();
+    // Collapse first: expanded, this card covers the lower part of the photo,
+    // so the pulse it triggers plays behind it and looks like nothing happened.
+    collapseExpandedCard();
     selectMatchCard(cardApi);
-    pulseDetection(cardApi.detection);
+    requestAnimationFrame(() => pulseDetection(cardApi.detection));
+  });
+  expandButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleCardExpanded(cardApi, expandButton);
+  });
+  reportWrongButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    submitRecognitionFeedback(cardApi, "deny");
   });
   enableCropHoverPreview(cropCanvas);
   cropCanvas.addEventListener("click", () => {
     selectMatchCard(cardApi);
-    openCropViewer(cropCanvas, name.textContent);
+
+    if (contributorMode) {
+      openCropViewer(cropCanvas, name.textContent);
+      return;
+    }
+
+    // For a player the thumbnail behaves like the rest of the card: it points
+    // at the box on the photo rather than opening a crop inspector.
+    pulseDetection(cardApi.detection);
   });
   correctionPanel.addEventListener("submit", (event) => submitCorrectedReference(event, cardApi));
   correctionInput.addEventListener("input", () => {
@@ -2164,84 +2267,81 @@ function createMatchCard(cropCanvas, detection, index) {
   correctionCancelButton.addEventListener("click", () => hideCorrectionPrompt(cardApi));
   correctionCoverConfirmButton.addEventListener("click", () => saveConfirmedCorrectedReference(cardApi));
   correctionCoverBackButton.addEventListener("click", () => resetCorrectionCoverConfirmation(cardApi, { focus: true }));
-  enableSwipeDismiss(cardApi);
   updateFeedbackActions(cardApi);
   cardApi.applyFilters();
   return cardApi;
 }
 
-function enableSwipeDismiss(cardApi) {
-  const card = cardApi.card;
-  let gesture = null;
-
-  card.addEventListener("pointerdown", (event) => {
-    if (
-      cardApi.dismissed
-      || (event.pointerType === "mouse" && event.button !== 0)
-      || isSwipeDismissInteractiveTarget(event.target)
-    ) {
-      return;
-    }
-
-    gesture = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      startTime: event.timeStamp,
-      dx: 0,
-      dragging: false,
-    };
-
-    card.setPointerCapture?.(event.pointerId);
-  });
-
-  card.addEventListener("pointermove", (event) => {
-    if (!gesture || gesture.pointerId !== event.pointerId || cardApi.dismissed) {
-      return;
-    }
-
-    const dx = event.clientX - gesture.startX;
-    const dy = event.clientY - gesture.startY;
-    const absX = Math.abs(dx);
-    const absY = Math.abs(dy);
-
-    if (!gesture.dragging) {
-      if (absX < 8 && absY < 8) {
-        return;
-      }
-
-      if (absY > absX * 1.25) {
-        resetSwipeGesture(card, gesture.pointerId);
-        gesture = null;
-        return;
-      }
-
-      gesture.dragging = true;
-      card.classList.add("isSwiping");
-    }
-
-    gesture.dx = dx;
-    updateSwipeDismissPreview(card, dx);
-    event.preventDefault();
-  });
-
-  card.addEventListener("pointerup", (event) => {
-    finishSwipeDismiss(cardApi, gesture, event, true);
-    gesture = null;
-  });
-
-  card.addEventListener("pointercancel", (event) => {
-    finishSwipeDismiss(cardApi, gesture, event, false);
-    gesture = null;
-  });
-}
-
-function isSwipeDismissInteractiveTarget(target) {
-  return target.closest?.("button, input, select, textarea, a, label, .correctionPanel, .matchCropCanvas");
-}
-
 function isMatchSelectionInteractiveTarget(target) {
   return target.closest?.("button, input, select, textarea, a, label, .correctionPanel, .matchCropCanvas");
+}
+
+let stripScrollBeforeExpand = 0;
+
+function setExpansionClipping(expanded) {
+  // Switching a scroll container to overflow: visible discards its scroll
+  // position, so it is captured here and restored on collapse.
+  if (expanded) {
+    stripScrollBeforeExpand = resultsGrid.scrollLeft;
+  }
+
+  // Both the panel and the grid clip their overflow; neither may while a card
+  // is growing past them.
+  resultsPanel.classList.toggle("hasExpandedCard", expanded);
+  resultsGrid.classList.toggle("hasExpandedCard", expanded);
+
+  if (!expanded) {
+    requestAnimationFrame(() => {
+      resultsGrid.scrollLeft = stripScrollBeforeExpand;
+    });
+  }
+}
+
+function returnCardToStrip(cardApi) {
+  const button = cardApi.card.querySelector(".cardExpandButton");
+
+  cardApi.card.classList.remove("isExpanded");
+  setExpansionClipping(false);
+
+  if (button) {
+    button.textContent = "See more";
+    button.setAttribute("aria-expanded", "false");
+  }
+}
+
+function collapseExpandedCard(except = null) {
+  let restored = false;
+
+  for (const cardApi of currentResultCards) {
+    if (cardApi === except || !cardApi.card.classList.contains("isExpanded")) {
+      continue;
+    }
+
+    returnCardToStrip(cardApi);
+    restored = true;
+  }
+
+}
+
+function toggleCardExpanded(cardApi, button) {
+  const card = cardApi.card;
+  const expanding = !card.classList.contains("isExpanded");
+
+  collapseExpandedCard(cardApi);
+
+  // The strip scrolls horizontally, and a scroll container clips its own
+  // overflow, so an expanded card cannot grow upward in place. It detaches to a
+  // fixed overlay above the strip instead, leaving the strip's own height alone.
+  if (expanding) {
+    setExpansionClipping(true);
+    card.classList.add("isExpanded");
+    button.textContent = "See less";
+    button.setAttribute("aria-expanded", "true");
+    selectMatchCard(cardApi);
+    return;
+  }
+
+  returnCardToStrip(cardApi);
 }
 
 function selectMatchCard(cardApi) {
@@ -2277,62 +2377,10 @@ function refreshSelectedMatchCard(cardApi) {
   }
 }
 
-function finishSwipeDismiss(cardApi, gesture, event, allowDismiss) {
-  if (!gesture || gesture.pointerId !== event.pointerId) {
-    return;
-  }
-
-  const distance = Math.abs(gesture.dx);
-  const elapsed = Math.max(1, event.timeStamp - gesture.startTime);
-  const wasQuickFlick = distance >= CARD_DISMISS_FLICK_MIN_DISTANCE
-    && distance / elapsed >= CARD_DISMISS_FLICK_VELOCITY;
-  const shouldDismiss = allowDismiss
-    && gesture.dragging
-    && (distance >= swipeDismissThreshold(cardApi.card) || wasQuickFlick);
-
-  releaseSwipePointer(cardApi.card, gesture.pointerId);
-
-  if (shouldDismiss) {
-    dismissMatchCard(cardApi, Math.sign(gesture.dx) || 1);
-  } else {
-    resetSwipeCard(cardApi.card);
-  }
-}
-
-function updateSwipeDismissPreview(card, dx) {
-  const threshold = swipeDismissThreshold(card);
-  const progress = Math.min(1, Math.abs(dx) / threshold);
-  const rotation = (dx / Math.max(1, card.offsetWidth)) * 3;
-
-  card.style.transform = `translate3d(${dx}px, 0, 0) rotate(${rotation}deg)`;
-  card.style.opacity = String(1 - progress * 0.34);
-  card.classList.toggle("isDismissReady", progress >= 1);
-}
-
-function resetSwipeGesture(card, pointerId) {
-  releaseSwipePointer(card, pointerId);
-  resetSwipeCard(card);
-}
-
 function releaseSwipePointer(card, pointerId) {
   if (card.hasPointerCapture?.(pointerId)) {
     card.releasePointerCapture(pointerId);
   }
-}
-
-function resetSwipeCard(card) {
-  card.classList.remove("isSwiping", "isDismissReady");
-  card.style.transform = "";
-  card.style.opacity = "";
-}
-
-function swipeDismissThreshold(card) {
-  const cardDistance = card.offsetWidth * CARD_DISMISS_RATIO;
-
-  return Math.min(
-    CARD_DISMISS_MAX_DISTANCE,
-    Math.max(CARD_DISMISS_MIN_DISTANCE, cardDistance)
-  );
 }
 
 function dismissMatchCard(cardApi, direction) {
@@ -2343,8 +2391,9 @@ function dismissMatchCard(cardApi, direction) {
   hideCropZoomPreview();
 
   const card = cardApi.card;
-  const viewportWidth = window.innerWidth || card.offsetWidth || 1;
-  const dismissX = (direction < 0 ? -1 : 1) * (viewportWidth + card.offsetWidth);
+  // Cards drop out of the strip downward. Sliding sideways read as scrolling
+  // now that the strip itself scrolls horizontally.
+  const dismissY = card.offsetHeight + 40;
   let removed = false;
 
   cardApi.dismissed = true;
@@ -2356,8 +2405,7 @@ function dismissMatchCard(cardApi, direction) {
     redrawActiveDetections();
   }
 
-  card.style.setProperty("--dismiss-x", `${dismissX}px`);
-  card.classList.remove("isSwiping", "isDismissReady");
+  card.style.setProperty("--dismiss-y", `${dismissY}px`);
   card.classList.add("isDismissing");
   card.style.transform = "";
   card.style.opacity = "";
@@ -2391,9 +2439,17 @@ function dismissMatchCard(cardApi, direction) {
 
 function enableCropHoverPreview(source) {
   source.addEventListener("pointerenter", (event) => {
+    if (!contributorMode) {
+      return;
+    }
     showCropZoomPreview(source, event);
   });
-  source.addEventListener("pointermove", positionCropZoomPreview);
+  source.addEventListener("pointermove", (event) => {
+    if (!contributorMode) {
+      return;
+    }
+    positionCropZoomPreview(event);
+  });
   source.addEventListener("pointerleave", hideCropZoomPreview);
   source.addEventListener("pointercancel", hideCropZoomPreview);
 }
@@ -2501,7 +2557,9 @@ function openCropViewer(source, titleText = "Crop") {
 
   const fitZoom = calculateCropViewerFitZoom(sourceSize, scroller);
   const coverZoom = calculateCropViewerCoverZoom(sourceSize, scroller);
-  const initialZoom = coverZoom;
+  // Open showing the whole crop. Cover zoom fills the frame but clips the
+  // edges, which is the wrong default when the point is to inspect the crop.
+  const initialZoom = fitZoom;
 
   cropViewerState = {
     sourceWidth: sourceSize.width,
@@ -4842,8 +4900,14 @@ function updateFeedbackActions(card) {
   denyButton.textContent = contributorMode ? "X" : "No";
   confirmButton.setAttribute("aria-label", contributorMode ? "Confirm recognition" : "Yes, this match is right");
   denyButton.setAttribute("aria-label", contributorMode ? "Deny recognition" : "No, this match is wrong");
-  confirmButton.hidden = card.feedbackSent;
-  denyButton.hidden = card.feedbackSent;
+  // Mock fixtures are correct by construction, so there is nothing to ask about.
+  const answered = card.feedbackSent || mockMatchesEnabled();
+
+  confirmButton.hidden = answered;
+  denyButton.hidden = answered;
+  // See more only appears once the Yes/No question is out of the way -- one ask
+  // at a time, and the answer comes first.
+  card.card.dataset.answered = answered ? "yes" : "no";
   confirmButton.disabled = disabled;
   denyButton.disabled = disabled;
 
@@ -4854,13 +4918,11 @@ function updateFeedbackActions(card) {
   if (card.matchFailed) {
     feedbackStatus.textContent = "No match available";
   } else if (waiting) {
-    feedbackStatus.textContent = "Waiting for match";
+    feedbackStatus.textContent = "Matching...";
   } else if (contributorMode) {
-    feedbackStatus.textContent = "Confirm or deny";
+    feedbackStatus.textContent = "Correct?";
   } else {
-    feedbackStatus.textContent = card.isConfident
-      ? "Is this right?"
-      : "This might be it. Is it right?";
+    feedbackStatus.textContent = card.isConfident ? "Right?" : "Maybe?";
   }
 }
 
@@ -4892,11 +4954,13 @@ async function submitRecognitionFeedback(card, action) {
       }
       redrawActiveDetections();
     }
-    await sendRecognitionFeedback(card, action, best, {
-      confident: card.isConfident,
-      contributor: contributorMode,
-      feedbackEventId,
-    });
+    if (!mockMatchesEnabled()) {
+      await sendRecognitionFeedback(card, action, best, {
+        confident: card.isConfident,
+        contributor: contributorMode,
+        feedbackEventId,
+      });
+    }
     card.feedbackSent = true;
     updateFeedbackActions(card);
     card.card.classList.toggle("feedbackConfirmed", action === "confirm");
@@ -5263,8 +5327,6 @@ function closeFilterPanel() {
 }
 
 function handleFilterChange() {
-  updateFilterSummary();
-
   for (const card of currentResultCards) {
     card.applyFilters();
   }
@@ -5285,47 +5347,6 @@ function refreshResultCards() {
   sortCards();
   // Filter state drives the box overlay, so the photo has to redraw too.
   redrawActiveDetections();
-}
-
-function updateFilterSummary() {
-  const filters = getFilters();
-  const parts = [];
-
-  if (filters.players) {
-    parts.push(`${filters.players} player${filters.players === 1 ? "" : "s"}`);
-  }
-
-  if (filters.maxTime) {
-    parts.push(`under ${filters.maxTime} min`);
-  }
-
-  if (filters.maxWeight < 5) {
-    parts.push(`${filters.complexityLabel.toLowerCase()} complexity`);
-  }
-
-  if (filters.minRating) {
-    parts.push(`${filters.minRating}+ rating`);
-  }
-
-  if (filters.maxRank) {
-    parts.push(`top ${filters.maxRank}`);
-  }
-
-  if (filters.gameType) {
-    parts.push(formatGameTypeTag(filters.gameType));
-  }
-
-  if (filters.expansionMode === "base") {
-    parts.push("base games");
-  } else if (filters.expansionMode === "expansion") {
-    parts.push("expansions");
-  }
-
-  if (filters.minYear) {
-    parts.push(`since ${filters.minYear}`);
-  }
-
-  filterSummary.textContent = parts.length ? parts.join(" · ") : "Any game";
 }
 
 function getFilters() {
@@ -5363,7 +5384,7 @@ function evaluateCardAgainstFilters(card) {
       fits: false,
       rank: "-1",
       className: "pending",
-      text: "Waiting for match",
+      text: "Matching...",
     };
   }
 
@@ -5372,7 +5393,7 @@ function evaluateCardAgainstFilters(card) {
       fits: false,
       rank: "1",
       className: "unknown",
-      text: "Match is too uncertain for filters",
+      text: "Uncertain match",
     };
   }
 
@@ -5381,11 +5402,12 @@ function evaluateCardAgainstFilters(card) {
       fits: false,
       rank: "1",
       className: "unknown",
-      text: "No local data to check filters",
+      text: "No game data",
     };
   }
 
   const result = gameFitsFilters(card.details, filters);
+  card.checks = result.checks;
 
   if (result.fits) {
     if (result.conditionalFits?.length) {
@@ -5396,7 +5418,7 @@ function evaluateCardAgainstFilters(card) {
         fits: true,
         rank: "2",
         className: "conditional",
-        text: `Fits with ${expansionName}`,
+        text: `+ ${expansionName}`,
         title: `Matches the filters if ${expansion.name} is included.`,
       };
     }
@@ -5405,7 +5427,7 @@ function evaluateCardAgainstFilters(card) {
       fits: true,
       rank: "3",
       className: "yes",
-      text: filters.hasAny ? "Fits your filters" : "Confident match",
+      text: filters.hasAny ? "Fits" : "Confident",
     };
   }
 
@@ -5414,21 +5436,27 @@ function evaluateCardAgainstFilters(card) {
     rank: "0",
     className: "no",
     text: result.reasons.join(" · "),
+    title: result.reasons.join(" · "),
   };
 }
 
 function gameFitsFilters(details, filters) {
   const reasons = [];
   const conditionalFits = [];
+  // Per-dimension verdicts for the basic filters: "pass", "fail", "maybe"
+  // (fits only with an expansion), or "off" when that filter is not set.
+  const checks = { players: "off", time: "off", weight: "off" };
 
   if (filters.players) {
     const playerResult = checkPlayerCount(details, filters.players);
+    checks.players = playerResult.fits ? "pass" : "fail";
 
     if (!playerResult.fits) {
       const expansionResult = checkPlayerExpansionCount(details, filters.players);
 
       if (expansionResult.fits) {
         conditionalFits.push(expansionResult.expansion);
+        checks.players = "maybe";
       } else {
         reasons.push(playerResult.reason);
       }
@@ -5437,6 +5465,7 @@ function gameFitsFilters(details, filters) {
 
   if (filters.maxTime) {
     const timeResult = checkMaxTime(details, filters.maxTime);
+    checks.time = timeResult.fits ? "pass" : "fail";
 
     if (!timeResult.fits) {
       reasons.push(timeResult.reason);
@@ -5445,6 +5474,7 @@ function gameFitsFilters(details, filters) {
 
   if (filters.maxWeight < 5) {
     const complexityResult = checkComplexity(details, filters.maxWeight, filters.complexityLabel);
+    checks.weight = complexityResult.fits ? "pass" : "fail";
 
     if (!complexityResult.fits) {
       reasons.push(complexityResult.reason);
@@ -5495,6 +5525,7 @@ function gameFitsFilters(details, filters) {
     fits: reasons.length === 0,
     conditionalFits: reasons.length === 0 ? conditionalFits : [],
     reasons,
+    checks,
   };
 }
 
@@ -5923,7 +5954,8 @@ function overlaySourcePoint(event) {
 
   const scale = Math.min(rect.width / sourceWidth, rect.height / sourceHeight);
   const offsetX = (rect.width - sourceWidth * scale) / 2;
-  const offsetY = (rect.height - sourceHeight * scale) / 2;
+  // Must match drawDetections, or a tap lands on the wrong box.
+  const offsetY = rect.height - sourceHeight * scale;
   const x = (event.clientX - rect.left - offsetX) / scale;
   const y = (event.clientY - rect.top - offsetY) / scale;
 
@@ -5999,11 +6031,12 @@ function openMatchesForCard(cardApi) {
 
   showResultsPanel();
   selectMatchCard(cardApi);
-
-  // Wait for the panel to lay out before scrolling, or the card's position is
-  // still the pre-open one.
   requestAnimationFrame(() => {
-    cardApi.card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    cardApi.card.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
   });
 }
 
@@ -6025,6 +6058,21 @@ function handleDetectionTap(event) {
 
   markBoxTapHintSeen();
   openMatchesForCard(cardApi);
+}
+
+// The title block's height varies with the status text, so the action row's
+// offset is measured rather than assumed -- they must meet with no seam.
+function syncTopPanelHeight() {
+  const bar = document.getElementById("topBar");
+
+  if (!bar) {
+    return;
+  }
+
+  document.documentElement.style.setProperty(
+    "--topbar-height",
+    `${Math.round(bar.getBoundingClientRect().height)}px`,
+  );
 }
 
 function updateBoxInteractivity() {
@@ -6070,6 +6118,12 @@ function redrawActiveDetections() {
 }
 
 function drawDetections(detections, sourceCanvas, displayElement, selectedDetection = null) {
+  // Clear the inline sizing from the previous pass first. It is set below and
+  // would otherwise override the stylesheet, pinning the canvas to whatever
+  // size it happened to be drawn at before the layout changed around it.
+  boxesCanvas.style.width = "";
+  boxesCanvas.style.height = "";
+
   const displayRect = boxesCanvas.getBoundingClientRect();
   const displayWidth = displayRect.width;
   const displayHeight = displayRect.height;
@@ -6094,8 +6148,11 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
   const scale = baseScale * (manualBoxMode ? modifierZoom : 1);
   const offsetX = (displayWidth - sourceWidth * scale) / 2
     + (manualBoxMode ? modifierPanX : 0);
-  const offsetY = (displayHeight - sourceHeight * scale) / 2
-    + (manualBoxMode ? modifierPanY : 0);
+  // Bottom-aligned outside box editing, matching object-position: center bottom
+  // on the photo. Centred while editing, where the photo fills the viewport.
+  const offsetY = (manualBoxMode
+    ? (displayHeight - sourceHeight * scale) / 2 + modifierPanY
+    : displayHeight - sourceHeight * scale);
   const styles = getComputedStyle(document.documentElement);
   const boxStart = cssValue(styles, "--blue", "#5d7cff");
   const boxEnd = cssValue(styles, "--violet", "#bf5af2");
@@ -6374,23 +6431,23 @@ function cssValue(styles, name, fallback) {
 }
 
 function showResultShell(count) {
-  // The panel deliberately stays closed. Results are surfaced on the photo
-  // first -- fitting boxes highlighted, non-fitting greyed out -- so the photo
-  // stays visible while matching resolves. Tapping a box opens the panel and
-  // scrolls to that card.
-  resultsPanel.hidden = true;
-  showMatchesButton.hidden = false;
+  // The matches strip is permanent while results exist. The photo is resized to
+  // sit above it rather than behind it, so nothing needs to be dismissed to see
+  // the picture.
+  resultsPanel.hidden = false;
+  showMatchesButton.hidden = true;
+  document.body.classList.add("hasResults");
   resultCount.textContent = `${count}`;
   setResultsNotice("");
+  // The photo box just changed size, so the overlay has to be remeasured.
+  requestAnimationFrame(redrawActiveDetections);
 }
 
+// Retained because box editing hides the strip entirely; ordinary use never
+// closes it.
 function hideResultsPanel() {
-  if (!currentResultCards.length) {
-    return;
-  }
-
   resultsPanel.hidden = true;
-  showMatchesButton.hidden = false;
+  showMatchesButton.hidden = true;
 }
 
 function showResultsPanel() {
@@ -6489,7 +6546,9 @@ function clearResults(cancelActiveScan = true) {
   document.body.classList.remove("manualBoxMode");
   document.body.classList.remove("boxesInteractive");
   applyModifierZoom();
+  collapseExpandedCard();
   currentResultCards = [];
+  document.body.classList.remove("hasResults");
   rejectedDetections.clear();
   detectionPulse = null;
   if (detectionPulseFrame) {
@@ -6553,6 +6612,7 @@ function setControlsEnabled(enabled) {
   }
   filterImageModeActive = imageModeActive;
   filterVisibilityButton.hidden = manualBoxMode;
+  requestAnimationFrame(syncTopPanelHeight);
 
   startCameraButton.hidden = cameraReady || imagePreviewActive;
   uploadButton.hidden = false;
@@ -6682,6 +6742,12 @@ async function drawImageElementToCanvas(file, canvas) {
     drawImageSourceToCanvas(image, canvas);
   } finally {
     URL.revokeObjectURL(url);
+  }
+}
+
+function rememberMockSource(canvas, src) {
+  if (canvas) {
+    canvas.mockSourceLabel = src || "";
   }
 }
 

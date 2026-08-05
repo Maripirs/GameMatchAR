@@ -1,4 +1,9 @@
 :root {
+  /* Height of the matches strip, and the tile size inside it. The photo
+     subtracts this so the two never overlap. */
+  --matches-height: 168px;
+  --match-card-width: 236px;
+  --match-card-height: 112px;
   color-scheme: dark;
   --app-bg: #080913;
   --app-text: #f6f3ec;
@@ -110,6 +115,31 @@ select {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+/* While results are on screen the photo is confined to the space above the
+   strip. object-fit: contain letterboxes it, and drawDetections remeasures the
+   canvas from its own rect, so the overlay follows automatically. */
+body.hasResults:not(.manualBoxMode) #camera,
+body.hasResults:not(.manualBoxMode) #photoPreview {
+  /* Anchored to the bottom of its box so the picture meets the strip instead of
+     floating in the middle with a gap above it. drawDetections mirrors this. */
+  object-position: center bottom;
+}
+
+body.hasResults:not(.manualBoxMode) #camera,
+body.hasResults:not(.manualBoxMode) #photoPreview,
+body.hasResults:not(.manualBoxMode) #boxes {
+  /* height, not bottom: these are replaced elements, and height: auto on a
+     canvas resolves to its intrinsic aspect ratio rather than to the
+     top/bottom constraints. */
+  height: calc(100% - var(--matches-height) - env(safe-area-inset-bottom));
+}
+
+/* The strip is permanent, so neither control has anything to do. */
+#hideResultsButton,
+#showMatchesButton {
+  display: none;
 }
 
 #filterActions {
@@ -338,8 +368,55 @@ body.manualBoxMode #zoomInButton {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  z-index: 3;
+  z-index: 5;
   pointer-events: auto;
+}
+
+#topBarActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* While a scan is on screen the action row moves up under the title instead of
+   holding a full-width band at the bottom, which the photo can now use. */
+/* One panel at the top instead of three floating pieces: the title/status and
+   its buttons on one line, the scan actions directly beneath, sharing a single
+   background with no gap between them. */
+body.imagePreview:not(.manualBoxMode) #topBar {
+  padding: 8px 10px 0;
+  border: 1px solid var(--panel-border);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--panel-bg-strong);
+  backdrop-filter: blur(14px);
+}
+
+body.imagePreview:not(.manualBoxMode) #controls {
+  top: calc(max(14px, env(safe-area-inset-top)) + var(--topbar-height, 52px));
+  right: 12px;
+  bottom: auto;
+  left: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--panel-border);
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: var(--panel-bg-strong);
+  backdrop-filter: blur(14px);
+}
+
+body.imagePreview:not(.manualBoxMode) #controls button {
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+body.imagePreview:not(.manualBoxMode) #controls button {
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 13px;
 }
 
 #topBar > div:first-child {
@@ -872,11 +949,8 @@ body:not(.filterPanelOpen) #filterPanel {
   display: none;
 }
 
+/* Laid out by the top bar now rather than floating over it at a fixed offset. */
 #filterVisibilityButton {
-  position: fixed;
-  top: max(14px, env(safe-area-inset-top));
-  right: 58px;
-  z-index: 5;
   min-height: 36px;
   padding: 7px 11px;
   border: 1px solid var(--panel-border);
@@ -910,16 +984,6 @@ body.filterPanelOpen #filterVisibilityButton {
   color: var(--app-text-strong);
   font-size: 14px;
   line-height: 1.1;
-}
-
-#filterSummary {
-  overflow: hidden;
-  color: var(--app-soft);
-  font-size: 12px;
-  line-height: 1.2;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 #filterHeaderControls {
@@ -1478,17 +1542,27 @@ body.imagePreview #uploadButton {
   cursor: default;
 }
 
+/* Bottom sheet by default. The photo carries the answer now -- highlighted
+   boxes and their labels -- so the panel must not bury it. A full-height side
+   column only earns its place where there is room for both, which is why it
+   returns above 1100px rather than at 681px. */
+/* A permanent strip along the bottom. The photo is resized to sit above it
+   rather than behind it, so the answer and the picture are on screen together
+   and nothing has to be dismissed to see either. */
 #resultsPanel {
   position: fixed;
-  top: 86px;
-  right: 12px;
-  bottom: calc(78px + env(safe-area-inset-bottom));
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
   z-index: 3;
-  width: min(390px, calc(100vw - 24px));
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  width: auto;
+  height: calc(var(--matches-height) + env(safe-area-inset-bottom));
+  overflow: hidden;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  border: 0;
+  border-top: 1px solid var(--panel-border);
+  border-radius: 0;
   background: var(--panel-bg);
   backdrop-filter: blur(16px);
   box-shadow: 0 14px 40px color-mix(in srgb, var(--app-bg) 42%, transparent);
@@ -1559,9 +1633,506 @@ body.imagePreview #uploadButton {
   display: none;
 }
 
+/* Cards scroll sideways in a single row of fixed-size tiles: a vertical list
+   of tall cards showed barely one result in the space available. */
 #resultsGrid {
-  display: grid;
+  display: flex;
+  flex-direction: row;
   gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: flex-end;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+#resultsGrid > .matchCard {
+  flex: 0 0 var(--match-card-width);
+  width: var(--match-card-width);
+  height: var(--match-card-height);
+  overflow: hidden;
+}
+
+/* Trimmed for the compact tile: the BGG id, similarity/confidence diagnostics,
+   the PaLIGemma hint, and "Show in picture" (the photo is never hidden now, and
+   tapping the card already pulses its box). */
+.matchCard .matchMeta,
+.matchCard .matchDiagnostic,
+.matchCard .matchScore,
+.matchCard .paligemmaHint,
+.matchCard .findGameButton {
+  display: none;
+}
+
+/* Keep only Players, Time and Weight -- the three the filters act on. Rank,
+   rating, type, year and the BGG link are detail, not triage. */
+.matchCard .gameDetails > div:nth-child(n + 4) {
+  display: none;
+}
+
+/* One fact per row with an icon instead of a word: at tile width the labels
+   cost more room than they earned. Rows are Players, Time, Weight -- the three
+   the basic filters act on. Masks rather than <img> so they inherit text
+   colour and follow the theme. */
+.matchCard .gameDetails {
+  /* display must be restated: the base rule is a two-column grid, and
+     flex-direction alone would leave that in place. */
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 1px;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.matchCard .gameDetails > div {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.matchCard .gameDetails > div + div::before {
+  content: none;
+}
+
+.matchCard .gameDetails > div > span {
+  display: block;
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  opacity: 0.62;
+  background-color: currentColor;
+  font-size: 0;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+/* Each icon reports its own dimension: does this game satisfy that particular
+   filter? A card can fit on players and fail on time, which the single combined
+   verdict could never show. Colour follows the app palette -- accent for pass,
+   danger for fail -- and "maybe" (fits only with an expansion) sits between. */
+.matchCard[data-check-players="pass"] .gameDetails > div:nth-child(1) > span,
+.matchCard[data-check-time="pass"] .gameDetails > div:nth-child(2) > span,
+.matchCard[data-check-weight="pass"] .gameDetails > div:nth-child(3) > span {
+  opacity: 1;
+  background-color: var(--success);
+}
+
+.matchCard[data-check-players="fail"] .gameDetails > div:nth-child(1) > span,
+.matchCard[data-check-time="fail"] .gameDetails > div:nth-child(2) > span,
+.matchCard[data-check-weight="fail"] .gameDetails > div:nth-child(3) > span {
+  opacity: 0.9;
+  background-color: var(--danger);
+}
+
+.matchCard[data-check-players="maybe"] .gameDetails > div:nth-child(1) > span {
+  opacity: 1;
+  background-color: var(--violet);
+}
+
+.matchCard .gameDetails > div:nth-child(1) > span {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%271.8%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%279%27%20cy%3D%278%27%20r%3D%273.1%27%2F%3E%3Cpath%20d%3D%27M3.4%2019c0-3.1%202.5-5%205.6-5s5.6%201.9%205.6%205%27%2F%3E%3Ccircle%20cx%3D%2717%27%20cy%3D%279%27%20r%3D%272.4%27%2F%3E%3Cpath%20d%3D%27M15.6%2014.4c2.7-.5%205%201.3%205%204.6%27%2F%3E%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%271.8%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%279%27%20cy%3D%278%27%20r%3D%273.1%27%2F%3E%3Cpath%20d%3D%27M3.4%2019c0-3.1%202.5-5%205.6-5s5.6%201.9%205.6%205%27%2F%3E%3Ccircle%20cx%3D%2717%27%20cy%3D%279%27%20r%3D%272.4%27%2F%3E%3Cpath%20d%3D%27M15.6%2014.4c2.7-.5%205%201.3%205%204.6%27%2F%3E%3C%2Fsvg%3E");
+}
+
+.matchCard .gameDetails > div:nth-child(2) > span {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%271.8%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712.6%27%20r%3D%278.2%27%2F%3E%3Cpath%20d%3D%27M12%207.8v5l3.2%202.1%27%2F%3E%3Cpath%20d%3D%27M9.4%202.6h5.2%27%2F%3E%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%271.8%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712.6%27%20r%3D%278.2%27%2F%3E%3Cpath%20d%3D%27M12%207.8v5l3.2%202.1%27%2F%3E%3Cpath%20d%3D%27M9.4%202.6h5.2%27%2F%3E%3C%2Fsvg%3E");
+}
+
+.matchCard .gameDetails > div:nth-child(3) > span {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%271.8%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M5%2019v-3.6%27%2F%3E%3Cpath%20d%3D%27M10.4%2019v-7.4%27%2F%3E%3Cpath%20d%3D%27M15.8%2019v-11%27%2F%3E%3Cpath%20d%3D%27M21%2019V5%27%2F%3E%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%271.8%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M5%2019v-3.6%27%2F%3E%3Cpath%20d%3D%27M10.4%2019v-7.4%27%2F%3E%3Cpath%20d%3D%27M15.8%2019v-11%27%2F%3E%3Cpath%20d%3D%27M21%2019V5%27%2F%3E%3C%2Fsvg%3E");
+}
+
+/* The BGG link is emitted at the end of .gameDetails, but belongs beside the
+   title. Lifted out of the flow and parked left of the dismiss button, as an
+   icon -- "Open on BGG" costs a whole row on a tile this size. It only renders
+   for confident matches, since renderGameDetails returns early otherwise. */
+.matchCard .gameDetails > a {
+  position: absolute;
+  top: 9px;
+  right: 36px;
+  display: block;
+  width: 17px;
+  height: 17px;
+  opacity: 0.55;
+  background-color: currentColor;
+  font-size: 0;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M14%204h6v6%27%2F%3E%3Cpath%20d%3D%27M20%204l-8.5%208.5%27%2F%3E%3Cpath%20d%3D%27M18%2014.5V19a1.6%201.6%200%200%201-1.6%201.6H5A1.6%201.6%200%200%201%203.4%2019V7.6A1.6%201.6%200%200%201%205%206h4.5%27%2F%3E%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M14%204h6v6%27%2F%3E%3Cpath%20d%3D%27M20%204l-8.5%208.5%27%2F%3E%3Cpath%20d%3D%27M18%2014.5V19a1.6%201.6%200%200%201-1.6%201.6H5A1.6%201.6%200%200%201%203.4%2019V7.6A1.6%201.6%200%200%201%205%206h4.5%27%2F%3E%3C%2Fsvg%3E");
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.matchCard .gameDetails > a:hover,
+.matchCard .gameDetails > a:focus-visible {
+  opacity: 1;
+}
+
+/* Keep the title clear of both the link and the dismiss button. */
+.matchCard .matchName {
+  padding-right: 56px;
+}
+
+/* One line collapsed -- a second line was the 6px that tipped long names like
+   "Whistle Mountain" out of the tile. The full name is in the title attribute
+   and shown in full when expanded. */
+.matchCard .matchName {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13.5px;
+  line-height: 1.2;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+/* In the action row rather than on its own line, which cost ~15px and tipped
+   every tile into overflow. Sized to a real tap target: as a 13px sliver it was
+   effectively unhittable with a finger, and it sits next to the destructive
+   "No", so a near miss dismissed the card. */
+/* Small to look at, big to hit. The visible chip is compact, but ::after
+   extends an invisible hit area to roughly a fingertip -- at its original 13px
+   it was effectively untappable and sat next to the destructive "No". */
+.cardExpandButton {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.2;
+  text-decoration: underline;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Must out-specify `.feedbackActions button` (0,1,1), which pins everything in
+   that row to 34px tall and 38px wide -- correct for the Yes/No targets, and
+   exactly the bulk that made this read as a button rather than a link. */
+.matchCard .cardExpandButton {
+  /* appearance: none matters -- with appearance: auto the browser can still
+     paint native button chrome even though border and background are cleared. */
+  appearance: none;
+  -webkit-appearance: none;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 400;
+  text-decoration: underline;
+}
+
+/* Keyboard focus still gets a ring; a pointer tap does not leave one behind. */
+.matchCard .cardExpandButton:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Extends upward and sideways only. A symmetric inset pushed past the card's
+   box and counted toward its scroll height, tipping tiles into overflow. */
+.cardExpandButton::after {
+  position: absolute;
+  inset: -12px -9px -2px;
+  content: "";
+}
+
+/* Only offered where there is more to show, and only once the Yes/No question
+   has been answered -- the two never compete for the same corner. */
+.matchCard:not([data-confident="yes"]) .cardExpandButton,
+.matchCard:not([data-answered="yes"]) .cardExpandButton {
+  display: none;
+}
+
+.cardExpandButton:hover,
+.cardExpandButton:focus-visible {
+  color: var(--app-text-strong);
+}
+
+/* Reporting a bad match stays available after the Yes/No question is gone --
+   it just moves inside the expanded card rather than crowding the tile. */
+.cardReportWrongButton {
+  display: none;
+}
+
+.matchCard.isExpanded .cardReportWrongButton {
+  display: block;
+  justify-self: start;
+  align-self: start;
+  width: auto;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.matchCard.isExpanded .cardReportWrongButton:hover,
+.matchCard.isExpanded .cardReportWrongButton:focus-visible {
+  color: var(--app-text-strong);
+}
+
+/* Expanded: lifted out of the scrolling strip and anchored just above it, so
+   the strip keeps its height and the photo is never resized. */
+/* Suspend clipping so the expanded card can grow past both containers.
+   Horizontal scrolling pauses while it is open, which is fine -- the point of
+   expanding is to look at one card. */
+#resultsPanel.hasExpandedCard {
+  overflow: visible;
+}
+
+#resultsGrid.hasExpandedCard {
+  overflow: visible;
+  /* Pinned: left to itself the row stretches to the tallest item, so the card
+     grew downward off-screen instead of upward. With a fixed height and
+     align-items: flex-end, the extra height overflows the top. */
+  height: calc(var(--match-card-height) + 4px);
+  min-height: calc(var(--match-card-height) + 4px);
+}
+
+/* The card itself grows upward out of the strip. align-items: flex-end on the
+   row keeps its bottom edge pinned, so the extra height goes over the photo. */
+/* Expanded: one column. The two-column tile layout only makes sense at tile
+   size; here the crop and title share the top row and everything else runs the
+   full width. */
+#resultsGrid > .matchCard.isExpanded {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 6px 10px;
+  /* Absolute, not in the row: a card further along sits past the right edge of
+     the screen, so expanding it in place showed only its left sliver. Anchored
+     to the panel instead, it is always fully on screen whichever card it is. */
+  position: absolute;
+  right: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: 12px;
+  z-index: 6;
+  width: auto;
+  max-width: 460px;
+  height: auto;
+  max-height: 46vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  /* Fully opaque: --panel-bg-strong is translucent and the photo read straight
+     through it. The .rejected tile dimming (opacity: 0.7) is undone too -- it is
+     right for a de-emphasised tile in the strip and wrong for a reading
+     surface, where it washes out the text and lets the photo bleed through. */
+  opacity: 1;
+  background: var(--app-bg);
+  box-shadow: var(--panel-shadow);
+}
+
+html[data-theme="light"] #resultsGrid > .matchCard.isExpanded {
+  background: #fffdf8;
+}
+
+/* Lets the body's children become grid items of the card itself, so each can
+   choose its own column span. */
+#resultsGrid > .matchCard.isExpanded .matchBody {
+  display: contents;
+}
+
+/* The crop spans the whole header block, with the title, its similarity and
+   "Show in picture" stacked beside it. */
+#resultsGrid > .matchCard.isExpanded canvas {
+  grid-row: 1 / 4;
+  grid-column: 1;
+  align-self: start;
+  width: 68px;
+  height: 96px;
+}
+
+#resultsGrid > .matchCard.isExpanded .matchName {
+  grid-row: 1;
+  grid-column: 2;
+  align-self: end;
+  -webkit-line-clamp: 2;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+#resultsGrid > .matchCard.isExpanded .matchScore {
+  grid-row: 2;
+  grid-column: 2;
+  align-self: center;
+}
+
+#resultsGrid > .matchCard.isExpanded .findGameButton {
+  grid-row: 3;
+  grid-column: 2;
+  align-self: start;
+}
+
+/* Everything below the header block spans the card. */
+#resultsGrid > .matchCard.isExpanded .matchBody > *:not(.matchName):not(.matchScore):not(.findGameButton) {
+  grid-column: 1 / -1;
+}
+
+.matchCard.isExpanded .gameDetails > div:nth-child(n + 4) {
+  display: flex;
+}
+
+.matchCard.isExpanded .gameDetails {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 12px;
+  margin-top: 2px;
+  font-size: 12px;
+  white-space: normal;
+}
+
+/* Labels back as words, in a muted tone. The per-filter icon colouring is an
+   icon treatment -- left on, it paints a solid block behind the label text,
+   which is what made this unreadable. */
+.matchCard.isExpanded[data-check-players] .gameDetails > div > span,
+.matchCard.isExpanded .gameDetails > div > span {
+  width: auto;
+  height: auto;
+  opacity: 1;
+  background: none;
+  color: var(--app-soft);
+  font-size: 11px;
+  font-weight: 400;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.matchCard.isExpanded .gameDetails > div + div::before {
+  content: none;
+}
+
+.matchCard.isExpanded .matchScore {
+  display: block;
+  color: var(--app-soft);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.matchCard.isExpanded .findGameButton {
+  display: block;
+  justify-self: start;
+  width: auto;
+  min-height: 30px;
+  margin-top: 2px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* One row: Yes/No on the left, nothing shouting on the right. */
+.matchCard.isExpanded .feedbackActions {
+  margin-top: 4px;
+}
+
+.matchCard.isExpanded .feedbackStatus {
+  display: none;
+}
+
+.matchCard.isExpanded .cardExpandButton {
+  position: static;
+  justify-self: end;
+  margin-top: 6px;
+}
+
+/* A narrower thumbnail than the vertical layout used: the facts matter more
+   than the crop here, and the crop inspector is contributor-only now. */
+#resultsGrid > .matchCard {
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 8px;
+}
+
+/* The base rule sizes this canvas at 92px (82px on narrow screens), which
+   overflowed the narrower column here and ran under the text. */
+#resultsGrid > .matchCard canvas {
+  width: 54px;
+  /* An explicit height, not 100%: that does not resolve against this grid cell,
+     so the canvas fell back to the crop's intrinsic height -- a tall spine crop
+     then inflated the tile's scroll height to ~290px. */
+  height: calc(var(--match-card-height) - 14px);
+  object-fit: contain;
+}
+
+.matchCard .matchBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* Room for the name to take a second line without pushing the buttons out of
+   the tile. */
+#resultsGrid > .matchCard {
+  padding: 6px 7px;
+}
+
+.matchCard .feedbackConfirmButton,
+.matchCard .feedbackDenyButton {
+  min-height: 25px;
+  padding: 2px 11px;
+  font-size: 12px;
+}
+
+.matchCard .feedbackActions {
+  margin-top: auto;
+  gap: 6px;
+}
+
+/* The placeholder prose for an unconfident match ("Game details hidden until
+   the match is stronger") overflows the tile, and the fit badge above it
+   already says the same thing. */
+.matchCard .gameDetails.muted,
+.matchCard .feedbackStatus:empty {
+  display: none;
+}
+
+/* The verdict badge is redundant on the tile: the box on the photo already
+   carries it -- highlighted for a fit, greyed when filtered out or uncertain --
+   and the status line gives the count. The className still drives that
+   styling; only the text is dropped. */
+.matchCard .filterFit {
+  display: none;
+}
+
+/* "Right?" is prompting for a tap on buttons that are already right there, and
+   the corner is needed for See more. */
+#resultsGrid > .matchCard:not(.isExpanded) .feedbackStatus:not(:empty) {
+  display: none;
+}
+
+.matchCard .feedbackStatus {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .resultsNotice {
@@ -1639,7 +2210,7 @@ body.imagePreview #uploadButton {
 .matchCard.isDismissing {
   opacity: 0;
   pointer-events: none;
-  transform: translate3d(var(--dismiss-x), 0, 0) rotate(2deg);
+  transform: translate3d(0, var(--dismiss-y), 0) scale(0.94);
 }
 
 .matchCard canvas {
@@ -2259,9 +2830,18 @@ body.contributorMode .correctionPanel.isOpen {
     bottom: calc(72px + env(safe-area-inset-bottom));
   }
 
+  /* Landscape phones: a 52vh sheet would be under 250px, less than one card.
+     Go back to a side column so the photo stays visible beside it rather than
+     underneath it. */
+  /* Landscape phones: a short bottom strip would be under 250px, less than one
+     card, so the panel returns to a side column with the photo beside it. */
   #resultsPanel {
+    left: auto;
+    right: 12px;
     top: 10px;
     bottom: calc(70px + env(safe-area-inset-bottom));
+    width: min(390px, 46vw);
+    height: auto;
     max-height: none;
   }
 }
@@ -2390,12 +2970,11 @@ body.contributorMode .correctionPanel.isOpen {
   }
 
   #resultsPanel {
-    left: 10px;
-    right: 10px;
+    left: 0;
+    right: 0;
     top: auto;
-    bottom: calc(80px + env(safe-area-inset-bottom));
+    bottom: 0;
     width: auto;
-    max-height: min(48vh, 430px);
   }
 
   #showMatchesButton {
@@ -2447,5 +3026,17 @@ body.contributorMode .correctionPanel.isOpen {
   .matchCard canvas {
     width: 82px;
     height: 82px;
+  }
+}
+
+/* Wide screens have room for the photo and a full-height column side by side,
+   so the sheet gives way to the original layout. */
+@media (min-width: 1100px) {
+  #resultsPanel {
+    left: auto;
+    right: 12px;
+    top: 86px;
+    width: min(390px, calc(100vw - 24px));
+    max-height: none;
   }
 }

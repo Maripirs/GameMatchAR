@@ -29,6 +29,7 @@
         <p id="status">Starting...</p>
       </div>
       <div id="topBarActions">
+        <button id="filterVisibilityButton" type="button" aria-expanded="false" hidden>Filters</button>
         <button id="infoButton" class="topIconButton" type="button" aria-label="Open app info" title="App info">
           <span aria-hidden="true">i</span>
         </button>
@@ -117,7 +118,6 @@
       <div id="filterHeader">
         <strong>Find games for</strong>
         <div id="filterHeaderControls">
-          <span id="filterSummary">Any game</span>
           <button id="advancedFilterToggle" type="button" aria-expanded="false">Advanced</button>
         </div>
       </div>
@@ -198,7 +198,6 @@
         <button id="applyFiltersButton" type="button">Done</button>
       </div>
     </section>
-    <button id="filterVisibilityButton" type="button" aria-expanded="false" hidden>Filters</button>
 
     <section id="controls">
       <button id="startCameraButton" type="button">Start Camera</button>
@@ -275,6 +274,18 @@
             }
           }
           base = localStorage.getItem("gamematchApiBase") || base;
+
+          // ?mock=1 replaces backend matching with canned results for the
+          // bundled examples, for UI work. Local-only, like the API override.
+          const mock = new URLSearchParams(window.location.search).get("mock");
+          if (mock !== null) {
+            if (mock && mock !== "0") {
+              localStorage.setItem("gamematchMockMatches", "1");
+            } else {
+              localStorage.removeItem("gamematchMockMatches");
+            }
+          }
+          window.GAMEMATCH_MOCK_MATCHES = localStorage.getItem("gamematchMockMatches") === "1";
         } catch (error) {
           console.warn("Could not read the API base override:", error);
         }
