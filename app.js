@@ -787,6 +787,31 @@ async function finishDinoSuggestionButton(message) {
   dismissDinoSuggestButton.hidden = true;
 }
 
+// ---------------------------------------------------------------------------
+// Overlay geometry
+//
+// How the photo maps onto the boxes canvas. This was previously computed in
+// three places -- the drawing pass and both hit-test helpers -- which drifted:
+// a change to the vertical alignment was applied to two of them and the third
+// silently kept sending taps to the wrong box. One function, three callers.
+//
+// Outside box editing the photo is bottom-aligned, matching
+// `object-position: center bottom` in the stylesheet. While editing it is
+// centred and carries the modifier zoom/pan.
+// ---------------------------------------------------------------------------
+function overlayGeometry(width, height, sourceWidth, sourceHeight) {
+  const baseScale = Math.min(width / sourceWidth, height / sourceHeight);
+  const scale = baseScale * (manualBoxMode ? modifierZoom : 1);
+
+  return {
+    scale,
+    offsetX: (width - sourceWidth * scale) / 2 + (manualBoxMode ? modifierPanX : 0),
+    offsetY: manualBoxMode
+      ? (height - sourceHeight * scale) / 2 + modifierPanY
+      : height - sourceHeight * scale,
+  };
+}
+
 function manualBoxSourcePoint(event) {
   if (!activeSourceCanvas || !activeDisplayElement) {
     return null;
@@ -797,9 +822,9 @@ function manualBoxSourcePoint(event) {
   const displayHeight = rect.height;
   const sourceWidth = activeSourceCanvas.width;
   const sourceHeight = activeSourceCanvas.height;
-  const scale = Math.min(displayWidth / sourceWidth, displayHeight / sourceHeight) * modifierZoom;
-  const offsetX = (displayWidth - sourceWidth * scale) / 2 + modifierPanX;
-  const offsetY = (displayHeight - sourceHeight * scale) / 2 + modifierPanY;
+  const { scale, offsetX, offsetY } = overlayGeometry(
+    displayWidth, displayHeight, sourceWidth, sourceHeight,
+  );
   const sourceX = (event.clientX - rect.left - offsetX) / scale;
   const sourceY = (event.clientY - rect.top - offsetY) / scale;
   if (sourceX < 0 || sourceX > sourceWidth || sourceY < 0 || sourceY > sourceHeight) {
@@ -1668,6 +1693,15 @@ function ensureDetectorLoaded() {
 }
 
 function ensureBackendMatcherReady({ force = false } = {}) {
+  // Mock mode never talks to a backend, so probing for one only produces a
+  // spurious "matching server offline" and blocks the results it is standing in
+  // for. Short-circuited here rather than at the call sites -- there are four.
+  if (mockMatchesEnabled()) {
+    backendMatcherAvailable = true;
+    backendMatcherUnavailable = false;
+    return Promise.resolve(true);
+  }
+
   if (backendMatcherUnavailable && !force) {
     return Promise.reject(new Error("Backend matcher is unavailable."));
   }
@@ -5952,10 +5986,9 @@ function overlaySourcePoint(event) {
     return null;
   }
 
-  const scale = Math.min(rect.width / sourceWidth, rect.height / sourceHeight);
-  const offsetX = (rect.width - sourceWidth * scale) / 2;
-  // Must match drawDetections, or a tap lands on the wrong box.
-  const offsetY = rect.height - sourceHeight * scale;
+  const { scale, offsetX, offsetY } = overlayGeometry(
+    rect.width, rect.height, sourceWidth, sourceHeight,
+  );
   const x = (event.clientX - rect.left - offsetX) / scale;
   const y = (event.clientY - rect.top - offsetY) / scale;
 
@@ -6144,15 +6177,9 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   ctx.clearRect(0, 0, displayWidth, displayHeight);
 
-  const baseScale = Math.min(displayWidth / sourceWidth, displayHeight / sourceHeight);
-  const scale = baseScale * (manualBoxMode ? modifierZoom : 1);
-  const offsetX = (displayWidth - sourceWidth * scale) / 2
-    + (manualBoxMode ? modifierPanX : 0);
-  // Bottom-aligned outside box editing, matching object-position: center bottom
-  // on the photo. Centred while editing, where the photo fills the viewport.
-  const offsetY = (manualBoxMode
-    ? (displayHeight - sourceHeight * scale) / 2 + modifierPanY
-    : displayHeight - sourceHeight * scale);
+  const { scale, offsetX, offsetY } = overlayGeometry(
+    displayWidth, displayHeight, sourceWidth, sourceHeight,
+  );
   const styles = getComputedStyle(document.documentElement);
   const boxStart = cssValue(styles, "--blue", "#5d7cff");
   const boxEnd = cssValue(styles, "--violet", "#bf5af2");
