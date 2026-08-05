@@ -430,7 +430,23 @@ body.imagePreview:not(.manualBoxMode) #topBar {
   flex-wrap: nowrap;
 }
 
+/* FLOW A -- chrome gets out of the way.
+   The scan actions are secondary once a scan is on screen: you look at the
+   photo, not at "Modify boxes". They collapse to a slim row that only reveals
+   itself on hover/focus, and the title shrinks to a single line. The photo
+   takes everything that frees up. */
+body.imagePreview:not(.manualBoxMode) #topBar h1 {
+  display: none;
+}
+
 body.imagePreview:not(.manualBoxMode) #controls {
+  overflow: hidden;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom-width: 0;
+  opacity: 0;
+  transition: max-height 160ms ease, opacity 160ms ease, padding 160ms ease;
   top: var(--topbar-height, 52px);
   right: 0;
   bottom: auto;
@@ -445,10 +461,32 @@ body.imagePreview:not(.manualBoxMode) #controls {
   backdrop-filter: blur(14px);
 }
 
+body.imagePreview:not(.manualBoxMode) #topBar:hover ~ #controls,
+body.imagePreview:not(.manualBoxMode) #controls:hover,
+body.imagePreview:not(.manualBoxMode) #controls:focus-within,
+body.imagePreview.chromeOpen:not(.manualBoxMode) #controls {
+  max-height: 60px;
+  padding-top: 8px;
+  padding-bottom: 10px;
+  border-bottom-width: 1px;
+  opacity: 1;
+}
+
 body.imagePreview:not(.manualBoxMode) #controls button {
   min-height: 34px;
   padding: 6px 8px;
   font-size: 13px;
+}
+
+body.imagePreview:not(.manualBoxMode) #topBar:hover ~ #controls,
+body.imagePreview:not(.manualBoxMode) #controls:hover,
+body.imagePreview:not(.manualBoxMode) #controls:focus-within,
+body.imagePreview.chromeOpen:not(.manualBoxMode) #controls {
+  max-height: 60px;
+  padding-top: 8px;
+  padding-bottom: 10px;
+  border-bottom-width: 1px;
+  opacity: 1;
 }
 
 body.imagePreview:not(.manualBoxMode) #controls button {

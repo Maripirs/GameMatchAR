@@ -180,6 +180,7 @@ let filterImageModeActive = false;
 // reopening it for them. Keyed on dismissal rather than on whether any filter is
 // set, because the filters now ship with defaults.
 let filterPanelDismissedByUser = false;
+let topBarToggleBound = false;
 
 initThemeControl();
 setControlsEnabled(false);
@@ -6112,11 +6113,17 @@ function syncTopPanelHeight() {
     ? controls.getBoundingClientRect().height
     : 0;
 
+  const next = Math.round(barHeight + controlsHeight);
+  const previous = document.documentElement.style.getPropertyValue("--topchrome-height");
+
   document.documentElement.style.setProperty("--topbar-height", `${Math.round(barHeight)}px`);
-  document.documentElement.style.setProperty(
-    "--topchrome-height",
-    `${Math.round(barHeight + controlsHeight)}px`,
-  );
+  document.documentElement.style.setProperty("--topchrome-height", `${next}px`);
+
+  // Changing the chrome height resizes the photo, so the overlay has to be
+  // remeasured against it or the boxes keep the old geometry.
+  if (previous !== `${next}px`) {
+    requestAnimationFrame(redrawActiveDetections);
+  }
 }
 
 function updateBoxInteractivity() {
@@ -6651,6 +6658,18 @@ function setControlsEnabled(enabled) {
   filterImageModeActive = imageModeActive;
   filterVisibilityButton.hidden = manualBoxMode;
   requestAnimationFrame(syncTopPanelHeight);
+  // Flow A: tapping the status line toggles the action row on touch, where
+  // there is no hover.
+  if (!topBarToggleBound) {
+    topBarToggleBound = true;
+    document.getElementById("topBar")?.addEventListener("click", (event) => {
+      if (event.target.closest("button")) {
+        return;
+      }
+      document.body.classList.toggle("chromeOpen");
+      requestAnimationFrame(syncTopPanelHeight);
+    });
+  }
 
   startCameraButton.hidden = cameraReady || imagePreviewActive;
   uploadButton.hidden = false;
