@@ -71,6 +71,7 @@ const timeFilter = document.getElementById("timeFilter");
 const complexityFilter = document.getElementById("complexityFilter");
 const filterSummary = document.getElementById("filterSummary");
 const filterVisibilityButton = document.getElementById("filterVisibilityButton");
+const applyFiltersButton = document.getElementById("applyFiltersButton");
 const advancedFilterToggle = document.getElementById("advancedFilterToggle");
 const advancedFilterPanel = document.getElementById("advancedFilterPanel");
 const minRatingFilter = document.getElementById("minRatingFilter");
@@ -140,6 +141,19 @@ let gameSearchLoadPromise = null;
 let gameSearchIndex = [];
 let gameSearchById = new Map();
 let currentResultCards = [];
+// "Show in picture" points at a box with a transient pulse rather than a
+// persistent highlight, so it never competes with the filter styling for the
+// same visual channel -- one owns appearance, the other owns time.
+const PULSE_DURATION_MS = 1500;
+const PULSE_CYCLE_MS = 500;
+const PULSE_MAX_SPREAD = 18;
+let detectionPulse = null;
+let detectionPulseFrame = 0;
+
+// Detections the user marked as wrong. Held separately from the cards because a
+// public "No" dismisses the card and drops it from currentResultCards, while
+// the box itself must stay greyed out on the photo.
+const rejectedDetections = new Set();
 let selectedMatchCard = null;
 let startupStatusActive = true;
 let contributorMode = false;
@@ -167,6 +181,11 @@ const modifierTouchPointers = new Map();
 const modifierSuppressedTouchPointers = new Set();
 let modifierTouchGesture = null;
 let filterImageModeActive = false;
+// Set once the user closes the filters themselves. Until then the panel is kept
+// open across mode changes so it stays discoverable; afterwards we stop
+// reopening it for them. Keyed on dismissal rather than on whether any filter is
+// set, because the filters now ship with defaults.
+let filterPanelDismissedByUser = false;
 
 initThemeControl();
 setControlsEnabled(false);
@@ -217,10 +236,16 @@ startDetectorTrainingButton.addEventListener("click", startDetectorTraining);
   control.addEventListener("input", handleFilterChange);
   control.addEventListener("change", handleFilterChange);
 });
+applyFiltersButton.addEventListener("click", closeFilterPanel);
+// Filters lead on first load, so the panel starts open on every screen. The
+// summary has to be primed too, since the controls ship with default values.
+setFilterPanelOpen(true);
+updateFilterSummary();
 window.addEventListener("resize", () => {
   hideCropZoomPreview();
   redrawActiveDetections();
 });
+boxesCanvas.addEventListener("click", handleDetectionTap);
 boxesCanvas.addEventListener("pointerdown", handleModifierPointerDown);
 boxesCanvas.addEventListener("pointermove", handleModifierPointerMove);
 boxesCanvas.addEventListener("pointerup", handleModifierPointerUp);
@@ -560,9 +585,11 @@ async function processImageCanvas(sourceCanvas, displayElement) {
     });
 
     if (token === scanToken) {
-      setStatus(matchFailures
-        ? `Done. ${matchFailures} match${matchFailures === 1 ? "" : "es"} failed.`
-        : "Done.");
+      const outcome = filterOutcomeSummary();
+      const base = matchFailures
+        ? `${outcome || "Done."} ${matchFailures} match${matchFailures === 1 ? "" : "es"} failed.`
+        : (outcome || "Done.");
+      setStatus(`${base}${boxTapHintSuffix()}`);
     }
   } catch (error) {
     console.error(error);
@@ -1900,6 +1927,9 @@ function createMatchCard(cropCanvas, detection, index) {
     details: null,
     isConfident: false,
     fitsFilters: false,
+    // Drives how this card's box is drawn on the photo overlay:
+    // pending | yes | conditional | no | unknown
+    filterClassName: "pending",
     feedbackSent: false,
     userConfirmed: false,
     matchFailed: false,
@@ -1939,6 +1969,8 @@ function createMatchCard(cropCanvas, detection, index) {
       this.feedbackSent = false;
       this.userConfirmed = false;
       this.matchFailed = false;
+      // A fresh match result replaces whatever the user rejected before.
+      rejectedDetections.delete(this.detection);
       card.classList.remove("feedbackConfirmed", "feedbackDenied");
 
       if (!best) {
@@ -1987,6 +2019,9 @@ function createMatchCard(cropCanvas, detection, index) {
       this.matches = [correctedMatch];
       this.isConfident = true;
       this.userConfirmed = true;
+      // The correction supersedes the rejection -- this box now has a game the
+      // user vouched for, so it should stop being greyed out.
+      rejectedDetections.delete(this.detection);
       this.details = gameDetailsById.get(Number(game.id)) || null;
       name.textContent = game.name;
       meta.textContent = `BGG ${game.id} · corrected`;
@@ -2053,6 +2088,7 @@ function createMatchCard(cropCanvas, detection, index) {
       this.details = null;
       this.isConfident = false;
       this.fitsFilters = false;
+      this.filterClassName = "unknown";
       this.matchFailed = true;
       this.userConfirmed = false;
       name.textContent = text;
@@ -2073,6 +2109,7 @@ function createMatchCard(cropCanvas, detection, index) {
       const result = evaluateCardAgainstFilters(this);
 
       this.fitsFilters = result.fits;
+      this.filterClassName = result.className;
       card.dataset.fit = result.rank;
       card.classList.toggle("recommended", result.className === "yes");
       card.classList.toggle("conditional", result.className === "conditional");
@@ -2080,6 +2117,8 @@ function createMatchCard(cropCanvas, detection, index) {
       fit.className = `filterFit ${result.className}`;
       fit.textContent = result.text;
       fit.title = result.title || result.text;
+      // Keep this card's box on the photo in step with its filter verdict.
+      redrawActiveDetections();
     },
   };
 
@@ -2105,8 +2144,11 @@ function createMatchCard(cropCanvas, detection, index) {
   denyButton.addEventListener("click", () => submitRecognitionFeedback(cardApi, "deny"));
   dismissButton.addEventListener("click", () => dismissMatchCard(cardApi, 1));
   findGameButton.addEventListener("click", () => {
-    selectMatchCard(cardApi);
+    // Reveal the photo first, then pulse -- pulsing behind a panel that still
+    // covers the photo would play to nobody.
     hideResultsPanel();
+    selectMatchCard(cardApi);
+    pulseDetection(cardApi.detection);
   });
   enableCropHoverPreview(cropCanvas);
   cropCanvas.addEventListener("click", () => {
@@ -4845,6 +4887,10 @@ async function submitRecognitionFeedback(card, action) {
     if (action === "deny") {
       card.denialFeedbackEventId = feedbackEventId;
       card.deniedMatch = { ...best };
+      if (card.detection) {
+        rejectedDetections.add(card.detection);
+      }
+      redrawActiveDetections();
     }
     await sendRecognitionFeedback(card, action, best, {
       confident: card.isConfident,
@@ -5196,11 +5242,24 @@ function toggleAdvancedFilters() {
   advancedFilterToggle.classList.toggle("isOpen", open);
 }
 
-function toggleFilterPanelVisibility() {
-  const open = !document.body.classList.contains("filterPanelOpen");
+function setFilterPanelOpen(open) {
   document.body.classList.toggle("filterPanelOpen", open);
   filterVisibilityButton.textContent = open ? "Close filters" : "Filters";
   filterVisibilityButton.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function toggleFilterPanelVisibility() {
+  const open = !document.body.classList.contains("filterPanelOpen");
+  filterPanelDismissedByUser = !open;
+  setFilterPanelOpen(open);
+}
+
+// The panel is held open on entering camera/photo mode so filters are
+// discoverable. Dismissing it is an explicit action -- Done, or the Filters
+// toggle -- rather than something that happens under the user mid-edit.
+function closeFilterPanel() {
+  filterPanelDismissedByUser = true;
+  setFilterPanelOpen(false);
 }
 
 function handleFilterChange() {
@@ -5211,11 +5270,21 @@ function handleFilterChange() {
   }
 
   refreshResultCards();
+
+  // Retightening the filters after a scan changes which boxes stay lit, so the
+  // count has to keep up. Only on an explicit filter change, so this never
+  // clobbers transient messages like "<game> highlighted in the photo."
+  const outcome = filterOutcomeSummary();
+  if (outcome) {
+    setStatus(outcome);
+  }
 }
 
 function refreshResultCards() {
   updateResultStats();
   sortCards();
+  // Filter state drives the box overlay, so the photo has to redraw too.
+  redrawActiveDetections();
 }
 
 function updateFilterSummary() {
@@ -5782,7 +5851,194 @@ function matchSortScore(match) {
   return cleanNumber(match?.rank_score ?? match?.score);
 }
 
+// Tapping a box is now the primary way into a match, and a canvas offers no
+// affordance to advertise it. Hint once, then never again.
+const BOX_TAP_HINT_KEY = "gamematchBoxTapHintSeen";
+
+function boxTapHintSuffix() {
+  try {
+    if (localStorage.getItem(BOX_TAP_HINT_KEY)) {
+      return "";
+    }
+  } catch (error) {
+    return "";
+  }
+  return " Tap a box for details.";
+}
+
+function markBoxTapHintSeen() {
+  try {
+    localStorage.setItem(BOX_TAP_HINT_KEY, "1");
+  } catch (error) {
+    // A private-mode browser just means the hint shows again; not worth failing.
+  }
+}
+
+function detectionMatchStates() {
+  const states = new Map();
+  let anyFits = false;
+
+  for (const cardApi of currentResultCards) {
+    if (cardApi.dismissed || !cardApi.detection) {
+      continue;
+    }
+
+    const state = cardApi.filterClassName || "pending";
+    if (state === "yes" || state === "conditional") {
+      anyFits = true;
+    }
+
+    states.set(cardApi.detection, {
+      state,
+      name: cardApi.matches?.[0]?.name || "",
+    });
+  }
+
+  // Applied last so a rejection always wins over whatever the matcher thought.
+  for (const detection of rejectedDetections) {
+    states.set(detection, { state: "rejected", name: "" });
+  }
+
+  // Greying every box when nothing fits just washes the photo out and conveys
+  // nothing -- highlighting only reads as highlighting against a contrast. With
+  // no winners, only user-rejected boxes are dimmed and the rest stay neutral.
+  return { states, anyFits };
+}
+
+// Mirrors the transform drawDetections uses outside manual box mode, so a tap
+// lands on the same box the user sees. It deliberately ignores the modifier
+// zoom/pan, which only apply while editing boxes.
+function overlaySourcePoint(event) {
+  if (!activeSourceCanvas) {
+    return null;
+  }
+
+  const rect = boxesCanvas.getBoundingClientRect();
+  const sourceWidth = activeSourceCanvas.width;
+  const sourceHeight = activeSourceCanvas.height;
+
+  if (!rect.width || !rect.height || !sourceWidth || !sourceHeight) {
+    return null;
+  }
+
+  const scale = Math.min(rect.width / sourceWidth, rect.height / sourceHeight);
+  const offsetX = (rect.width - sourceWidth * scale) / 2;
+  const offsetY = (rect.height - sourceHeight * scale) / 2;
+  const x = (event.clientX - rect.left - offsetX) / scale;
+  const y = (event.clientY - rect.top - offsetY) / scale;
+
+  if (x < 0 || x > sourceWidth || y < 0 || y > sourceHeight) {
+    return null;
+  }
+
+  return { x, y };
+}
+
+function cardForDetection(detection) {
+  return currentResultCards.find(
+    (cardApi) => cardApi.detection === detection && !cardApi.dismissed,
+  ) || null;
+}
+
+function pulseDetection(detection) {
+  if (!detection) {
+    return;
+  }
+
+  detectionPulse = { detection, start: performance.now() };
+
+  if (detectionPulseFrame) {
+    return;
+  }
+
+  const step = () => {
+    if (!detectionPulse) {
+      detectionPulseFrame = 0;
+      return;
+    }
+
+    if (performance.now() - detectionPulse.start >= PULSE_DURATION_MS) {
+      detectionPulse = null;
+      detectionPulseFrame = 0;
+      redrawActiveDetections();
+      return;
+    }
+
+    redrawActiveDetections();
+    detectionPulseFrame = requestAnimationFrame(step);
+  };
+
+  detectionPulseFrame = requestAnimationFrame(step);
+}
+
+function drawDetectionPulse(ctx, box, elapsed, color) {
+  // Rings expand outward and fade, repeating until the whole effect fades out.
+  const phase = (elapsed % PULSE_CYCLE_MS) / PULSE_CYCLE_MS;
+  const overallFade = Math.max(0, 1 - elapsed / PULSE_DURATION_MS);
+  const spread = phase * PULSE_MAX_SPREAD;
+
+  ctx.save();
+  ctx.globalAlpha = (1 - phase) * overallFade;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4 * (1 - phase) + 1;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 16;
+  ctx.strokeRect(
+    box.x - spread,
+    box.y - spread,
+    box.width + spread * 2,
+    box.height + spread * 2,
+  );
+  ctx.restore();
+}
+
+function openMatchesForCard(cardApi) {
+  if (!cardApi) {
+    return;
+  }
+
+  showResultsPanel();
+  selectMatchCard(cardApi);
+
+  // Wait for the panel to lay out before scrolling, or the card's position is
+  // still the pre-open one.
+  requestAnimationFrame(() => {
+    cardApi.card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+}
+
+function handleDetectionTap(event) {
+  if (manualBoxMode || !activeSourceCanvas?.lastDetections || !currentResultCards.length) {
+    return;
+  }
+
+  const point = overlaySourcePoint(event);
+  if (!point) {
+    return;
+  }
+
+  const detection = findDetectionAtPoint(activeSourceCanvas.lastDetections, point);
+  const cardApi = detection ? cardForDetection(detection) : null;
+  if (!cardApi) {
+    return;
+  }
+
+  markBoxTapHintSeen();
+  openMatchesForCard(cardApi);
+}
+
+function updateBoxInteractivity() {
+  const interactive = Boolean(
+    !manualBoxMode
+    && currentResultCards.length
+    && activeSourceCanvas?.lastDetections?.length,
+  );
+  document.body.classList.toggle("boxesInteractive", interactive);
+}
+
 function redrawActiveDetections() {
+  updateBoxInteractivity();
+
   if (!activeSourceCanvas?.lastDetections || !activeDisplayElement) {
     return;
   }
@@ -5806,15 +6062,14 @@ function redrawActiveDetections() {
     detections,
     activeSourceCanvas,
     activeDisplayElement,
-    manualBoxMode
-      ? selectedBoxEdit?.draft || null
-      : selectedMatchCard?.detection || null,
-    manualBoxMode ? "" : selectedMatchCard?.matches?.[0]?.name || ""
+    // Only box editing uses selection to restyle the overlay now, so there is
+    // nothing to pass outside it.
+    manualBoxMode ? selectedBoxEdit?.draft || null : null,
   );
   positionBoxEditActions();
 }
 
-function drawDetections(detections, sourceCanvas, displayElement, selectedDetection = null, selectedLabel = "") {
+function drawDetections(detections, sourceCanvas, displayElement, selectedDetection = null) {
   const displayRect = boxesCanvas.getBoundingClientRect();
   const displayWidth = displayRect.width;
   const displayHeight = displayRect.height;
@@ -5852,6 +6107,16 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
   const labelBorder = resolvedTheme === "light"
     ? "rgba(62, 99, 255, 0.32)"
     : "rgba(215, 223, 255, 0.24)";
+  // Boxes borrow the match cards' colour language so a highlighted box and its
+  // card are recognisably the same thing.
+  const fitStroke = cssValue(styles, "--success", "#8ea2ff");
+  const mutedStroke = resolvedTheme === "light"
+    ? "rgba(58, 60, 74, 0.55)"
+    : "rgba(196, 202, 222, 0.5)";
+  const matchStates = manualBoxMode ? null : detectionMatchStates();
+  // Label rects already drawn this pass, used to keep names from overlapping.
+  const placedLabels = [];
+  let pulseBox = null;
 
   ctx.lineWidth = 3;
   ctx.lineJoin = "round";
@@ -5860,34 +6125,111 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
 
   for (const detection of detections) {
     const selected = detection === selectedDetection;
-    const dimUnselected = selectedDetection && !selected;
+    // Outside box editing, selection no longer restyles the overlay: the filter
+    // status owns how a box looks, and "Show in picture" points with a pulse
+    // instead. In manual box mode selection still drives the edit affordances.
+    const focused = manualBoxMode && selected;
+    const dimUnselected = manualBoxMode && selectedDetection && !selected;
     const x = detection.x * scale + offsetX;
     const y = detection.y * scale + offsetY;
     const width = detection.width * scale;
     const height = detection.height * scale;
-    const rawLabel = detection.dino
+    let rawLabel = detection.dino
       ? `DINO ${detection.score.toFixed(2)}`
       : detection.manual
       ? "Manual"
-      : selected && selectedLabel
-      ? `${selectedLabel} ${detection.score.toFixed(2)}`
       : `${detection.score.toFixed(2)}`;
-    const boxGradient = ctx.createLinearGradient(x, y, x + width, y + height);
-    const boxLineWidth = selected ? 5 : 3;
+    if (detectionPulse && detection === detectionPulse.detection) {
+      pulseBox = { x, y, width, height };
+    }
 
-    boxGradient.addColorStop(0, detection.dino ? "#d946ef" : boxStart);
-    boxGradient.addColorStop(1, detection.dino ? "#f0abfc" : boxEnd);
+    const matchInfo = matchStates ? matchStates.states.get(detection) : null;
+    let matchState = matchInfo ? matchInfo.state : null;
+
+    // With nothing to contrast against, dimming everything says nothing -- so
+    // only the boxes the user explicitly rejected stay dimmed.
+    if (matchState && !matchStates.anyFits && matchState !== "rejected") {
+      matchState = null;
+    }
+
+    const boxGradient = ctx.createLinearGradient(x, y, x + width, y + height);
+    let boxLineWidth = focused ? 5 : 3;
+    let stateAlpha = 1;
+    let fits = false;
+
+    if (detection.dino) {
+      boxGradient.addColorStop(0, "#d946ef");
+      boxGradient.addColorStop(1, "#f0abfc");
+    } else if (matchState === "yes" || matchState === "conditional") {
+      // A confident, filter-passing match is the whole point of the scan, so it
+      // gets a deliberately louder treatment than a box that is merely a box.
+      boxGradient.addColorStop(0, matchState === "yes" ? fitStroke : boxEnd);
+      boxGradient.addColorStop(1, matchState === "yes" ? boxEnd : boxStart);
+      boxLineWidth = 6;
+      fits = true;
+    } else if (matchState === "unknown") {
+      // Matched, but not confidently enough to judge against the filters. Kept
+      // in the neutral colour rather than the excluded grey -- this is "not yet
+      // decided", not "ruled out" -- and left visible enough that the dashed
+      // edge actually registers. A dash alone at excluded-grey alpha was
+      // imperceptible.
+      boxGradient.addColorStop(0, boxStart);
+      boxGradient.addColorStop(1, boxEnd);
+      boxLineWidth = focused ? 5 : 3;
+      stateAlpha = 0.55;
+    } else if (matchState === "rejected" || matchState === "no") {
+      boxGradient.addColorStop(0, mutedStroke);
+      boxGradient.addColorStop(1, mutedStroke);
+      boxLineWidth = focused ? 5 : 2;
+      stateAlpha = 0.24;
+    } else {
+      // Detected, still unresolved: present but visually quiet.
+      boxGradient.addColorStop(0, boxStart);
+      boxGradient.addColorStop(1, boxEnd);
+      boxLineWidth = focused ? 5 : 2;
+      stateAlpha = matchState === "pending" ? 0.6 : 0.75;
+    }
+
+    // Name the game on a box that matched. A bare detector score is the least
+    // useful thing to show once we know what the box actually is. Greyed-out
+    // boxes keep the score so they stay visually quiet.
+    if (fits && matchInfo && matchInfo.name) {
+      rawLabel = matchInfo.name;
+    }
 
     ctx.save();
-    ctx.globalAlpha = dimUnselected ? 0.35 : 1;
+    // A selected box is always fully visible, even if its game was filtered out.
+    ctx.globalAlpha = focused ? 1 : (dimUnselected ? 0.35 : stateAlpha);
 
-    if (selected) {
+    // "Too uncertain to judge" and "judged, and excluded" are opposite facts
+    // that both used to render as the same grey. A dashed edge distinguishes
+    // the unknown ones, so widening the filters has a visible target.
+    if (matchState === "unknown") {
+      ctx.setLineDash([8, 6]);
+    }
+
+    // Matched boxes are deliberately not filled -- a wash over the cover veils
+    // the very artwork the user is checking the match against. The emphasis
+    // comes from border weight, a dark contrast halo, and glow instead.
+    if (focused) {
       ctx.fillStyle = resolvedTheme === "light"
         ? "rgba(62, 99, 255, 0.13)"
         : "rgba(113, 139, 255, 0.16)";
       ctx.fillRect(x, y, width, height);
-      ctx.shadowColor = boxEnd;
-      ctx.shadowBlur = 18;
+    }
+
+    if (fits) {
+      // Sits under the bright border so it stays legible over pale box art.
+      ctx.strokeStyle = resolvedTheme === "light"
+        ? "rgba(12, 14, 32, 0.34)"
+        : "rgba(0, 0, 0, 0.5)";
+      ctx.lineWidth = boxLineWidth + 4;
+      ctx.strokeRect(x, y, width, height);
+    }
+
+    if (focused || fits) {
+      ctx.shadowColor = fits ? fitStroke : boxEnd;
+      ctx.shadowBlur = fits ? 26 : 18;
     }
 
     ctx.strokeStyle = boxGradient;
@@ -5895,15 +6237,73 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     ctx.strokeRect(x, y, width, height);
     ctx.shadowBlur = 0;
 
+    // A greyed box carries no useful text. Its only available label would be the
+    // detector's box-confidence, which says nothing about which game it is --
+    // the most prominent number on a dimmed box would mean nothing to a player.
+    // The outline alone already reads as "found something, not for you".
+    const quietState = matchState === "no"
+      || matchState === "rejected"
+      || matchState === "unknown";
+
+    // A detection clipped by the frame edge would otherwise strand its label
+    // over empty letterbox with no box beneath it.
+    const photoLeft = offsetX;
+    const photoTop = offsetY;
+    const photoRight = offsetX + sourceWidth * scale;
+    const photoBottom = offsetY + sourceHeight * scale;
+    const visibleWidth = Math.max(0, Math.min(x + width, photoRight) - Math.max(x, photoLeft));
+    const visibleHeight = Math.max(0, Math.min(y + height, photoBottom) - Math.max(y, photoTop));
+    const visibleFraction = width * height > 0
+      ? (visibleWidth * visibleHeight) / (width * height)
+      : 0;
+
+    // Never skip in box-editing mode -- the loop still has to draw drag handles.
+    if (!manualBoxMode && (quietState || visibleFraction < 0.4)) {
+      ctx.restore();
+      continue;
+    }
+
     const labelPaddingX = 7;
     const labelHeight = 22;
-    const label = fitOverlayLabel(ctx, rawLabel, Math.max(24, displayWidth - labelPaddingX * 2));
+    // Game names run much wider than a bare score, so cap them rather than let
+    // one name span the photo.
+    const labelMaxWidth = Math.max(
+      24,
+      Math.min(displayWidth - labelPaddingX * 2, displayWidth * 0.6),
+    );
+    const label = fitOverlayLabel(ctx, rawLabel, labelMaxWidth);
     const labelWidth = Math.ceil(ctx.measureText(label).width) + labelPaddingX * 2;
-    const maxLabelX = Math.max(0, displayWidth - labelWidth);
-    const maxLabelY = Math.max(0, displayHeight - labelHeight);
-    const labelX = Math.min(Math.max(0, x), maxLabelX);
+    // Confine labels to the photo itself rather than the whole canvas, so none
+    // of them land in the letterbox bars above or below it.
+    const labelMinX = Math.max(0, photoLeft);
+    const labelMinY = Math.max(0, photoTop);
+    const maxLabelX = Math.max(labelMinX, Math.min(displayWidth, photoRight) - labelWidth);
+    const maxLabelY = Math.max(labelMinY, Math.min(displayHeight, photoBottom) - labelHeight);
+    const labelX = Math.min(Math.max(labelMinX, x), maxLabelX);
     const preferredLabelY = y - labelHeight - 5;
-    const labelY = Math.min(Math.max(0, preferredLabelY >= 0 ? preferredLabelY : y + 5), maxLabelY);
+    let labelY = Math.min(
+      Math.max(labelMinY, preferredLabelY >= labelMinY ? preferredLabelY : y + 5),
+      maxLabelY,
+    );
+
+    // Boxes on a shelf sit shoulder to shoulder, so their name labels overlap.
+    // Stack each one clear of those already placed -- upward by preference,
+    // downward once there is no room left above.
+    const collidesWithPlaced = (candidateY) => placedLabels.some((placed) => (
+      labelX < placed.x + placed.width
+      && labelX + labelWidth > placed.x
+      && candidateY < placed.y + labelHeight
+      && candidateY + labelHeight > placed.y
+    ));
+
+    for (let attempt = 0; attempt < 8 && collidesWithPlaced(labelY); attempt += 1) {
+      const lifted = labelY - (labelHeight + 4);
+      labelY = lifted >= labelMinY
+        ? lifted
+        : Math.min(labelY + labelHeight + 4, maxLabelY);
+    }
+
+    placedLabels.push({ x: labelX, y: labelY, width: labelWidth });
 
     ctx.beginPath();
     if (typeof ctx.roundRect === "function") {
@@ -5941,6 +6341,17 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     }
     ctx.restore();
   }
+
+  // Drawn last so the rings sit above every box rather than being overpainted
+  // by a neighbour drawn after them.
+  if (pulseBox && detectionPulse) {
+    drawDetectionPulse(
+      ctx,
+      pulseBox,
+      performance.now() - detectionPulse.start,
+      fitStroke,
+    );
+  }
 }
 
 function fitOverlayLabel(ctx, label, maxWidth) {
@@ -5963,8 +6374,12 @@ function cssValue(styles, name, fallback) {
 }
 
 function showResultShell(count) {
-  resultsPanel.hidden = false;
-  showMatchesButton.hidden = true;
+  // The panel deliberately stays closed. Results are surfaced on the photo
+  // first -- fitting boxes highlighted, non-fitting greyed out -- so the photo
+  // stays visible while matching resolves. Tapping a box opens the panel and
+  // scrolls to that card.
+  resultsPanel.hidden = true;
+  showMatchesButton.hidden = false;
   resultCount.textContent = `${count}`;
   setResultsNotice("");
 }
@@ -6019,6 +6434,42 @@ function updateResultStats() {
     : `${checked}/${currentResultCards.length} checked`;
 }
 
+// The matches panel now stays closed after a scan, so its "2/5 fit" counter is
+// out of sight. Without this the screen just shows mostly-grey boxes and reads
+// as a failed scan rather than as filters doing their job.
+function filterOutcomeSummary() {
+  const total = currentResultCards.length;
+
+  if (!total) {
+    return "";
+  }
+
+  const pending = currentResultCards.filter(
+    (card) => !card.matches.length && !card.matchFailed,
+  ).length;
+
+  if (pending) {
+    return "";
+  }
+
+  if (!getFilters().hasAny) {
+    const identified = currentResultCards.filter((card) => card.isConfident).length;
+    return identified
+      ? `Recognised ${identified} of ${total}.`
+      : `Found ${total} box${total === 1 ? "" : "es"}, none recognised.`;
+  }
+
+  const matched = currentResultCards.filter((card) => card.fitsFilters).length;
+
+  if (!matched) {
+    // Phrased without reference to the Filters button, since the panel may
+    // already be open.
+    return `None of the ${total} fit your filters. Adjust them to find a match.`;
+  }
+
+  return `${matched} of ${total} fit your filters.`;
+}
+
 function clearResults(cancelActiveScan = true) {
   if (cancelActiveScan) {
     scanToken++;
@@ -6036,8 +6487,15 @@ function clearResults(cancelActiveScan = true) {
   modifierPanX = 0;
   modifierPanY = 0;
   document.body.classList.remove("manualBoxMode");
+  document.body.classList.remove("boxesInteractive");
   applyModifierZoom();
   currentResultCards = [];
+  rejectedDetections.clear();
+  detectionPulse = null;
+  if (detectionPulseFrame) {
+    cancelAnimationFrame(detectionPulseFrame);
+    detectionPulseFrame = 0;
+  }
   resultsGrid.replaceChildren();
   resultsPanel.hidden = true;
   showMatchesButton.hidden = true;
@@ -6088,15 +6546,13 @@ function setControlsEnabled(enabled) {
   document.body.classList.toggle("cameraLive", liveCamera);
   document.body.classList.toggle("cameraFrozen", frozenFrame);
   document.body.classList.toggle("imagePreview", imagePreviewActive);
-  if (imageModeActive && !filterImageModeActive) {
-    document.body.classList.remove("filterPanelOpen");
-    filterVisibilityButton.textContent = "Filters";
-    filterVisibilityButton.setAttribute("aria-expanded", "false");
-  } else if (!imageModeActive) {
-    document.body.classList.remove("filterPanelOpen");
+  // Only on a mode *transition*, never on the repeated calls in between --
+  // otherwise this would keep reopening a panel the user just closed.
+  if (imageModeActive !== filterImageModeActive) {
+    setFilterPanelOpen(!filterPanelDismissedByUser);
   }
   filterImageModeActive = imageModeActive;
-  filterVisibilityButton.hidden = !imageModeActive || manualBoxMode;
+  filterVisibilityButton.hidden = manualBoxMode;
 
   startCameraButton.hidden = cameraReady || imagePreviewActive;
   uploadButton.hidden = false;

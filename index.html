@@ -124,13 +124,13 @@
       <div id="filterGrid">
         <label>
           <span>Players</span>
-          <input id="playersFilter" type="number" min="1" max="12" inputmode="numeric" placeholder="Any" />
+          <input id="playersFilter" type="number" min="1" max="12" inputmode="numeric" placeholder="Any" value="2" />
         </label>
         <label>
           <span>Max time</span>
           <select id="timeFilter">
             <option value="">Any</option>
-            <option value="30">30 min</option>
+            <option value="30" selected>30 min</option>
             <option value="45">45 min</option>
             <option value="60">60 min</option>
             <option value="90">90 min</option>
@@ -142,7 +142,7 @@
           <select id="complexityFilter">
             <option value="">Any</option>
             <option value="2">Low</option>
-            <option value="3">Medium</option>
+            <option value="3" selected>Medium</option>
             <option value="5">Any weight</option>
           </select>
         </label>
@@ -193,6 +193,9 @@
           <span>Since</span>
           <input id="minYearFilter" type="number" min="1900" max="2100" inputmode="numeric" placeholder="Any" />
         </label>
+      </div>
+      <div id="filterActions">
+        <button id="applyFiltersButton" type="button">Done</button>
       </div>
     </section>
     <button id="filterVisibilityButton" type="button" aria-expanded="false" hidden>Filters</button>

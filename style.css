@@ -112,6 +112,34 @@ select {
   pointer-events: none;
 }
 
+#filterActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 11px;
+}
+
+#applyFiltersButton {
+  min-height: 38px;
+  padding: 8px 22px;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel-bg-strong));
+  color: var(--app-text-strong);
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+#applyFiltersButton:hover {
+  background: color-mix(in srgb, var(--accent) 34%, var(--panel-bg-strong));
+}
+
+/* Once results exist, boxes become tappable shortcuts into the matches panel. */
+body.boxesInteractive #boxes {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 body.manualBoxMode #boxes {
   z-index: 2;
   pointer-events: auto;
@@ -838,9 +866,9 @@ body.contributorMode #infoButton {
   box-shadow: 0 12px 34px color-mix(in srgb, var(--app-bg) 38%, transparent);
 }
 
-body.cameraLive:not(.filterPanelOpen) #filterPanel,
-body.cameraFrozen:not(.filterPanelOpen) #filterPanel,
-body.imagePreview:not(.filterPanelOpen) #filterPanel {
+/* The panel is collapsible everywhere, not just over a photo, so that Done and
+   the Filters toggle behave the same on every screen. It starts open. */
+body:not(.filterPanelOpen) #filterPanel {
   display: none;
 }
 
