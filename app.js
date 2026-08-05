@@ -6102,9 +6102,20 @@ function syncTopPanelHeight() {
     return;
   }
 
+  const barHeight = bar.getBoundingClientRect().height;
+  // The controls row sits inside the top chrome while a scan is on screen, so
+  // the photo has to clear both. Measured rather than assumed: the status line
+  // wraps and the row is hidden in other modes.
+  const controlsVisible = document.body.classList.contains("imagePreview")
+    && !document.body.classList.contains("manualBoxMode");
+  const controlsHeight = controlsVisible
+    ? controls.getBoundingClientRect().height
+    : 0;
+
+  document.documentElement.style.setProperty("--topbar-height", `${Math.round(barHeight)}px`);
   document.documentElement.style.setProperty(
-    "--topbar-height",
-    `${Math.round(bar.getBoundingClientRect().height)}px`,
+    "--topchrome-height",
+    `${Math.round(barHeight + controlsHeight)}px`,
   );
 }
 

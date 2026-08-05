@@ -133,7 +133,11 @@ body.hasResults:not(.manualBoxMode) #boxes {
   /* height, not bottom: these are replaced elements, and height: auto on a
      canvas resolves to its intrinsic aspect ratio rather than to the
      top/bottom constraints. */
-  height: calc(100% - var(--matches-height) - env(safe-area-inset-bottom));
+  top: var(--topchrome-height, 0px);
+  height: calc(
+    100% - var(--topchrome-height, 0px) - var(--matches-height)
+    - env(safe-area-inset-bottom)
+  );
 }
 
 /* The strip is permanent, so neither control has anything to do. */
@@ -383,26 +387,60 @@ body.manualBoxMode #zoomInButton {
 /* One panel at the top instead of three floating pieces: the title/status and
    its buttons on one line, the scan actions directly beneath, sharing a single
    background with no gap between them. */
+/* Anchored flush to the top edge, mirroring the strip at the bottom: full
+   width, square corners, one border where it meets the photo. */
 body.imagePreview:not(.manualBoxMode) #topBar {
-  padding: 8px 10px 0;
-  border: 1px solid var(--panel-border);
-  border-bottom: 0;
-  border-radius: 10px 10px 0 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 0;
+  border: 0;
+  border-radius: 0;
   background: var(--panel-bg-strong);
   backdrop-filter: blur(14px);
 }
 
+/* Inside the anchored panel the title is no longer a floating chip -- the panel
+   itself is the surface, so its own border, shadow and blur come off. */
+body.imagePreview:not(.manualBoxMode) #topBar > div:first-child {
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+body.imagePreview:not(.manualBoxMode) #topBar h1 {
+  font-size: 18px;
+  text-shadow: none;
+}
+
+body.imagePreview:not(.manualBoxMode) #status {
+  text-shadow: none;
+}
+
+/* Keep the actions on one line; the status text takes the slack. */
+body.imagePreview:not(.manualBoxMode) #topBar {
+  align-items: center;
+}
+
+#topBarActions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
 body.imagePreview:not(.manualBoxMode) #controls {
-  top: calc(max(14px, env(safe-area-inset-top)) + var(--topbar-height, 52px));
-  right: 12px;
+  top: var(--topbar-height, 52px);
+  right: 0;
   bottom: auto;
-  left: 12px;
+  left: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
-  padding: 8px 10px 10px;
-  border: 1px solid var(--panel-border);
-  border-top: 0;
-  border-radius: 0 0 10px 10px;
+  padding: 8px 12px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--panel-border);
+  border-radius: 0;
   background: var(--panel-bg-strong);
   backdrop-filter: blur(14px);
 }
@@ -2864,9 +2902,11 @@ body.contributorMode .correctionPanel.isOpen {
     padding: 7px 9px;
   }
 
+  /* Stacked when the Filters button floated separately; in the anchored panel
+     it shares the row with the title, so they sit side by side. */
   #topBarActions {
-    align-items: flex-end;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
     gap: 6px;
   }
 
