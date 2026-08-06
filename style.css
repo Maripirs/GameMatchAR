@@ -453,9 +453,11 @@ body.imagePreview:not(.manualBoxMode) #controls {
   left: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
-  padding: 8px 12px 10px;
+  /* Vertical padding and the divider belong to the revealed state only. Declared
+     here they out-ordered the collapse rule above and left 19px behind. */
+  padding: 0 12px;
   border: 0;
-  border-bottom: 1px solid var(--panel-border);
+  border-bottom: 0 solid var(--panel-border);
   border-radius: 0;
   background: var(--panel-bg-strong);
   backdrop-filter: blur(14px);
