@@ -1,3 +1,25 @@
+/* ===========================================================================
+   GameMatch stylesheet
+   ---------------------------------------------------------------------------
+   Roughly in cascade order. Later sections deliberately override earlier ones,
+   so add rules to the section they belong to rather than to the end.
+
+     1. Tokens ............ :root, theme overrides, resets
+     2. Stage ............. camera, photo, box overlay
+     3. Top panel ......... #topBar, filters, info
+     4. Controls .......... #controls, camera and box-editing actions
+     5. Matches strip ..... #resultsPanel, #resultsGrid
+     6. Match card ........ tile, expanded card, states
+     7. Contributor ....... review, detector, correction
+     8. Responsive ........ @media blocks
+
+   Two things worth knowing before editing:
+     - `.feedbackActions button` pins height, width and weight for everything in
+       that row; overriding it needs at least (0,2,0) specificity.
+     - `.matchCard.rejected` sets opacity on the whole card, which is why the
+       expanded state has to reset it.
+   =========================================================================== */
+
 :root {
   /* Height of the matches strip, and the tile size inside it. The photo
      subtracts this so the two never overlap. */
@@ -141,11 +163,6 @@ body.hasResults:not(.manualBoxMode) #boxes {
 }
 
 /* The strip is permanent, so neither control has anything to do. */
-#hideResultsButton,
-#showMatchesButton {
-  display: none;
-}
-
 #filterActions {
   display: flex;
   justify-content: flex-end;
@@ -1676,29 +1693,6 @@ body.imagePreview #uploadButton {
 
 #hideResultsButton,
 #showMatchesButton {
-  min-height: 32px;
-  padding: 7px 9px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--panel-bg-strong) 76%, transparent);
-  color: var(--app-text);
-  font-size: 12px;
-  font-weight: 820;
-  line-height: 1;
-  cursor: pointer;
-  backdrop-filter: blur(14px);
-}
-
-#hideResultsButton:hover,
-#hideResultsButton:focus-visible,
-#showMatchesButton:hover,
-#showMatchesButton:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-  outline: 0;
-}
-
-#showMatchesButton {
   position: fixed;
   right: 12px;
   bottom: calc(84px + env(safe-area-inset-bottom));
@@ -2288,15 +2282,6 @@ html[data-theme="light"] #resultsGrid > .matchCard.isExpanded {
 
 .matchCard.rejected {
   opacity: 0.7;
-}
-
-.matchCard.isSwiping {
-  transition: none;
-}
-
-.matchCard.isDismissReady {
-  border-color: rgba(255, 155, 143, 0.72);
-  background: rgba(255, 155, 143, 0.14);
 }
 
 .matchCard.isDismissing {
