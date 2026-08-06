@@ -392,9 +392,17 @@ body.manualBoxMode #zoomInButton {
   pointer-events: auto;
 }
 
+/* The same gradient the highlighted boxes use -- --success to --violet, as in
+   drawDetections -- so the app's name and a confident match read as the same
+   accent rather than two unrelated blues. */
 #topBar h1 {
-  font-size: 17px;
-  margin-bottom: 1px;
+  margin: 5px 0 2px;
+  background: linear-gradient(100deg, var(--success), var(--violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-size: 18px;
+  font-weight: 800;
   text-shadow: none;
 }
 
@@ -462,12 +470,8 @@ body.imagePreview:not(.manualBoxMode) #controls {
 }
 
 #topBar h1 {
-  margin: 0 0 4px;
-  color: var(--app-text-strong);
-  font-size: 22px;
-  line-height: 1;
+  line-height: 1.15;
   letter-spacing: 0;
-  text-shadow: var(--text-shadow);
 }
 
 #status {
@@ -1604,7 +1608,6 @@ body.imagePreview #uploadButton {
 }
 
 
-#hideResultsButton,
 #showMatchesButton {
   position: fixed;
   right: 12px;
@@ -2073,12 +2076,6 @@ body.manualBoxMode #examplePanel {
 #resultCount {
   color: var(--app-soft);
   font-size: 13px;
-}
-
-#resultsHeaderActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 /* Cards scroll sideways in a single row of fixed-size tiles: a vertical list
@@ -2592,6 +2589,60 @@ html[data-theme="light"] #resultsGrid > .matchCard.isExpanded {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The strip's loading state: shown while a scan resolves, cleared once the
+   cards carry the answer themselves. */
+#resultsPanel #status {
+  margin: 6px 2px 0;
+  color: var(--app-soft);
+  font-size: 12px;
+}
+
+#resultsPanel #status:empty {
+  display: none;
+}
+
+/* A backend outage is a standing condition, not a passing message, so it gets
+   its own banner rather than a status line that scrolls away. */
+#backendWarning {
+  position: fixed;
+  top: calc(var(--topchrome-height, 48px) + 8px);
+  right: 12px;
+  left: 12px;
+  z-index: 6;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 16%, var(--panel-bg-strong));
+  color: var(--app-text-strong);
+  font-size: 12.5px;
+  backdrop-filter: blur(14px);
+}
+
+#backendWarning[hidden] {
+  display: none;
+}
+
+/* Pinned to the very bottom of the sheet, centred, below every section. */
+#infoFooter {
+  margin: 18px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+  color: var(--app-soft);
+  font-size: 12px;
+  text-align: center;
+}
+
+#infoFooter a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#examplePanel p {
+  margin: 2px 0 10px;
+  color: var(--app-soft);
+  font-size: 12.5px;
 }
 
 .resultsNotice {

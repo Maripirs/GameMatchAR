@@ -78,8 +78,8 @@ const minYearFilter = document.getElementById("minYearFilter");
 const resultsPanel = document.getElementById("resultsPanel");
 const resultsGrid = document.getElementById("resultsGrid");
 const resultCount = document.getElementById("resultCount");
+const backendWarning = document.getElementById("backendWarning");
 const resultsNotice = document.getElementById("resultsNotice");
-const hideResultsButton = document.getElementById("hideResultsButton");
 const showMatchesButton = document.getElementById("showMatchesButton");
 const infoButton = document.getElementById("infoButton");
 const infoPanel = document.getElementById("infoPanel");
@@ -210,7 +210,6 @@ uploadButton.addEventListener("click", () => imageUpload.click());
 imageUpload.addEventListener("change", handleImageUpload);
 advancedFilterToggle.addEventListener("click", toggleAdvancedFilters);
 filterVisibilityButton.addEventListener("click", toggleFilterPanelVisibility);
-hideResultsButton.addEventListener("click", hideResultsPanel);
 showMatchesButton.addEventListener("click", showResultsPanel);
 for (const button of exampleButtons) {
   button.addEventListener("click", () => scanExampleImage(button));
@@ -392,7 +391,7 @@ function closeActiveScan() {
   activeSourceCanvas = null;
   activeDisplayElement = video;
   setControlsEnabled(true);
-  setStatus("Choose camera, upload, or try an example.");
+  setStatus("");
 }
 
 async function handleImageUpload() {
@@ -584,7 +583,7 @@ async function processImageCanvas(sourceCanvas, displayElement) {
     });
 
     if (token === scanToken) {
-      setStatus(matchFailures ? "Some matches failed" : "Ready");
+      setStatus(matchFailures ? "Some matches failed" : "");
     }
   } catch (error) {
     console.error(error);
@@ -1722,12 +1721,14 @@ function ensureBackendMatcherReady({ force = false } = {}) {
 
         backendMatcherAvailable = true;
         backendMatcherUnavailable = false;
+        setBackendWarning(false);
         console.log("Backend matcher available:", result);
         return result;
       })
       .catch((error) => {
         backendMatcherAvailable = false;
         backendMatcherUnavailable = true;
+        setBackendWarning(true);
         backendMatcherLoadPromise = null;
         throw error;
       });
@@ -6223,9 +6224,12 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
   // Boxes borrow the match cards' colour language so a highlighted box and its
   // card are recognisably the same thing.
   const fitStroke = cssValue(styles, "--success", "#8ea2ff");
-  const mutedStroke = resolvedTheme === "light"
-    ? "rgba(58, 60, 74, 0.55)"
-    : "rgba(196, 202, 222, 0.5)";
+  const mutedStroke = resolvedTheme === "light" ? "#3a3c4a" : "#c4cade";
+  // A contrast halo under the muted outline, so a filtered-out box stays
+  // legible over both dark and pale box art rather than only one.
+  const mutedHalo = resolvedTheme === "light"
+    ? "rgba(255, 255, 255, 0.5)"
+    : "rgba(0, 0, 0, 0.45)";
   const matchStates = manualBoxMode ? null : detectionMatchStates();
   // Label rects already drawn this pass, used to keep names from overlapping.
   const placedLabels = [];
@@ -6269,6 +6273,7 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     let boxLineWidth = focused ? 5 : 3;
     let stateAlpha = 1;
     let fits = false;
+    let greyed = false;
 
     if (detection.dino) {
       boxGradient.addColorStop(0, "#d946ef");
@@ -6291,10 +6296,14 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
       boxLineWidth = focused ? 5 : 3;
       stateAlpha = 0.55;
     } else if (matchState === "rejected" || matchState === "no") {
-      boxGradient.addColorStop(0, mutedStroke);
-      boxGradient.addColorStop(1, mutedStroke);
+      // The outline keeps the accent colour -- the box was still found -- and
+      // the greying happens inside it, over the art, rather than by fading the
+      // outline until it disappears.
+      boxGradient.addColorStop(0, boxStart);
+      boxGradient.addColorStop(1, boxEnd);
       boxLineWidth = focused ? 5 : 2;
-      stateAlpha = 0.24;
+      stateAlpha = 0.8;
+      greyed = true;
     } else {
       // Detected, still unresolved: present but visually quiet.
       boxGradient.addColorStop(0, boxStart);
@@ -6328,6 +6337,15 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
       ctx.fillStyle = resolvedTheme === "light"
         ? "rgba(62, 99, 255, 0.13)"
         : "rgba(113, 139, 255, 0.16)";
+      ctx.fillRect(x, y, width, height);
+    }
+
+    if (greyed) {
+      // A wash over the box art: reads as "found, but not for you" without
+      // hiding what the box is.
+      ctx.fillStyle = resolvedTheme === "light"
+        ? "rgba(126, 128, 142, 0.46)"
+        : "rgba(12, 14, 26, 0.52)";
       ctx.fillRect(x, y, width, height);
     }
 
@@ -6738,6 +6756,12 @@ function setControlsEnabled(enabled) {
 
 function isCameraFrameFrozen() {
   return cameraReady && activeDisplayElement === photoPreview && !photoPreview.hidden;
+}
+
+function setBackendWarning(offline) {
+  if (backendWarning) {
+    backendWarning.hidden = !offline;
+  }
 }
 
 function setStatus(text) {
