@@ -363,17 +363,33 @@ body.manualBoxMode #zoomInButton {
   display: none;
 }
 
+/* The top panel. Anchored flush to the top edge in every state, mirroring the
+   matches strip at the bottom. Box editing hides it outright rather than
+   restyling it, so there is no second variant to keep in sync. */
 #topBar {
   position: fixed;
-  top: max(14px, env(safe-area-inset-top));
-  left: 12px;
-  right: 12px;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 5;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  z-index: 5;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 0;
+  background: var(--panel-bg-strong);
+  backdrop-filter: blur(14px);
   pointer-events: auto;
+}
+
+#topBar h1 {
+  font-size: 17px;
+  margin-bottom: 1px;
+  text-shadow: none;
+}
+
+#topBar #status {
+  text-shadow: none;
 }
 
 #topBarActions {
@@ -382,7 +398,14 @@ body.manualBoxMode #zoomInButton {
   gap: 8px;
 }
 
-#backButton[hidden],
+/* Back keeps its slot when unavailable rather than collapsing it: without the
+   reserved space the centred title shifted left on the home screen and the bar
+   read as a different layout between states. */
+#backButton[hidden] {
+  display: grid;
+  visibility: hidden;
+}
+
 #missingBoxesButton[hidden] {
   display: none;
 }
@@ -428,126 +451,15 @@ body.manualBoxMode #zoomInButton {
 /* The dedicated Close Scan / Modify boxes / Upload bar is gone: back replaces
    the first, the strip link the second, and Upload belongs to the landing
    screen. */
+/* The scan view has no action bar: back replaces Close Scan, the strip link
+   replaces Modify boxes, and Upload belongs to the landing screen. */
 body.imagePreview:not(.manualBoxMode) #controls {
   display: none;
-}
-
-/* While a scan is on screen the action row moves up under the title instead of
-   holding a full-width band at the bottom, which the photo can now use. */
-/* One panel at the top instead of three floating pieces: the title/status and
-   its buttons on one line, the scan actions directly beneath, sharing a single
-   background with no gap between them. */
-/* Anchored flush to the top edge, mirroring the strip at the bottom: full
-   width, square corners, one border where it meets the photo. */
-body.imagePreview:not(.manualBoxMode) #topBar {
-  top: 0;
-  right: 0;
-  left: 0;
-  padding: calc(8px + env(safe-area-inset-top)) 12px 0;
-  border: 0;
-  border-radius: 0;
-  background: var(--panel-bg-strong);
-  backdrop-filter: blur(14px);
-}
-
-/* Inside the anchored panel the title is no longer a floating chip -- the panel
-   itself is the surface, so its own border, shadow and blur come off. */
-body.imagePreview:not(.manualBoxMode) #topBar > div:first-child {
-  max-width: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
-body.imagePreview:not(.manualBoxMode) #topBar h1 {
-  font-size: 18px;
-  text-shadow: none;
-}
-
-body.imagePreview:not(.manualBoxMode) #status {
-  text-shadow: none;
-}
-
-/* Keep the actions on one line; the status text takes the slack. */
-body.imagePreview:not(.manualBoxMode) #topBar {
-  align-items: center;
 }
 
 #topBarActions {
   flex: 0 0 auto;
   flex-wrap: nowrap;
-}
-
-/* FLOW A -- chrome gets out of the way.
-   The scan actions are secondary once a scan is on screen: you look at the
-   photo, not at "Modify boxes". They collapse to a slim row that only reveals
-   itself on hover/focus, and the title shrinks to a single line. The photo
-   takes everything that frees up. */
-/* The name stays. The match count moved to the strip header, so the top bar
-   carries identity plus a short system state -- not a running commentary. */
-body.imagePreview:not(.manualBoxMode) #topBar h1 {
-  font-size: 17px;
-  margin-bottom: 1px;
-}
-
-body.imagePreview:not(.manualBoxMode) #controls {
-  overflow: hidden;
-  max-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-bottom-width: 0;
-  opacity: 0;
-  transition: max-height 160ms ease, opacity 160ms ease, padding 160ms ease;
-  top: var(--topbar-height, 52px);
-  right: 0;
-  bottom: auto;
-  left: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  /* Vertical padding and the divider belong to the revealed state only. Declared
-     here they out-ordered the collapse rule above and left 19px behind. */
-  padding: 0 12px;
-  border: 0;
-  border-bottom: 0 solid var(--panel-border);
-  border-radius: 0;
-  background: var(--panel-bg-strong);
-  backdrop-filter: blur(14px);
-}
-
-body.imagePreview:not(.manualBoxMode) #topBar:hover ~ #controls,
-body.imagePreview:not(.manualBoxMode) #controls:hover,
-body.imagePreview:not(.manualBoxMode) #controls:focus-within,
-body.imagePreview.chromeOpen:not(.manualBoxMode) #controls {
-  max-height: 60px;
-  padding-top: 8px;
-  padding-bottom: 10px;
-  border-bottom-width: 1px;
-  opacity: 1;
-}
-
-body.imagePreview:not(.manualBoxMode) #controls button {
-  min-height: 34px;
-  padding: 6px 8px;
-  font-size: 13px;
-}
-
-body.imagePreview:not(.manualBoxMode) #topBar:hover ~ #controls,
-body.imagePreview:not(.manualBoxMode) #controls:hover,
-body.imagePreview:not(.manualBoxMode) #controls:focus-within,
-body.imagePreview.chromeOpen:not(.manualBoxMode) #controls {
-  max-height: 60px;
-  padding-top: 8px;
-  padding-bottom: 10px;
-  border-bottom-width: 1px;
-  opacity: 1;
-}
-
-body.imagePreview:not(.manualBoxMode) #controls button {
-  min-height: 34px;
-  padding: 6px 8px;
-  font-size: 13px;
 }
 
 /* The title block is the panel's content, not a card sitting on it -- its own
@@ -1926,8 +1838,8 @@ body.imagePreview #uploadButton {
    for confident matches, since renderGameDetails returns early otherwise. */
 .matchCard .gameDetails > a {
   position: absolute;
-  top: 9px;
-  right: 36px;
+  top: 7px;
+  right: 7px;
   display: block;
   width: 17px;
   height: 17px;
@@ -1950,7 +1862,18 @@ body.imagePreview #uploadButton {
 }
 
 /* Keep the title clear of both the link and the dismiss button. */
+/* Only the link sits in the corner now, so the title needs far less clearance
+   than when it shared the row with a dismiss button. */
 .matchCard .matchName {
+  padding-right: 24px;
+}
+
+/* Contributors keep the dismiss X, so the link steps aside for it there. */
+body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .gameDetails > a {
+  right: 36px;
+}
+
+body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
   padding-right: 56px;
 }
 
