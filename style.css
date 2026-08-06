@@ -242,13 +242,6 @@ body.manualBoxMode #photoPreview {
   transform-origin: center;
 }
 
-body.manualBoxMode #topBar,
-body.manualBoxMode #filterPanel,
-body.manualBoxMode #resultsPanel,
-body.manualBoxMode #showMatchesButton,
-body.manualBoxMode #examplePanel {
-  display: none;
-}
 
 body.manualBoxMode #controls {
   left: 50%;
@@ -423,9 +416,6 @@ body.manualBoxMode #zoomInButton {
   visibility: hidden;
 }
 
-#missingBoxesButton[hidden] {
-  display: none;
-}
 
 #backButton svg {
   width: 20px;
@@ -437,33 +427,6 @@ body.manualBoxMode #zoomInButton {
   stroke-linejoin: round;
 }
 
-/* Offering a fix for a bad detection belongs beside the results, not in a
-   permanent bar of buttons. Plain text, because it is a question rather than a
-   primary action. */
-#resultCount {
-  flex: 0 0 auto;
-  color: var(--app-text-strong);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-#missingBoxesButton {
-  margin-left: auto;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font-size: 11.5px;
-  font-weight: 400;
-  text-decoration: underline;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-#missingBoxesButton:hover,
-#missingBoxesButton:focus-visible {
-  color: var(--app-text-strong);
-}
 
 /* The dedicated Close Scan / Modify boxes / Upload bar is gone: back replaces
    the first, the strip link the second, and Upload belongs to the landing
@@ -1640,6 +1603,433 @@ body.imagePreview #uploadButton {
   cursor: default;
 }
 
+
+#hideResultsButton,
+#showMatchesButton {
+  position: fixed;
+  right: 12px;
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  z-index: 4;
+  min-height: 42px;
+  padding: 10px 12px;
+  background: var(--primary-gradient);
+  color: #fffaf2;
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--purple) 30%, transparent);
+}
+
+#showMatchesButton[hidden] {
+  display: none;
+}
+
+
+.cropZoomPreview {
+  position: fixed;
+  z-index: 12;
+  display: block;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel-bg-strong);
+  box-shadow: 0 22px 58px color-mix(in srgb, var(--app-bg) 55%, transparent);
+  pointer-events: none;
+}
+
+.cropZoomPreview[hidden] {
+  display: none;
+}
+
+body.manualBoxMode .cropZoomPreview {
+  display: none !important;
+}
+
+.cropViewerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+  place-items: center;
+  background: var(--overlay-bg);
+}
+
+.cropViewerOverlay[hidden] {
+  display: none;
+}
+
+.cropViewerWindow {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(940px, calc(100vw - 28px));
+  height: min(760px, calc(100vh - 28px));
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel-gradient);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+
+.cropViewerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.cropViewerHeader h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--app-text-strong);
+  font-size: 16px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cropViewerToolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.cropViewerToolbar button {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 86%, transparent);
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cropViewerToolbar button:hover,
+.cropViewerToolbar button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  color: var(--app-text-strong);
+  outline: none;
+}
+
+.cropViewerZoomValue {
+  min-width: 46px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  text-align: center;
+}
+
+.cropViewerScroller {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
+  background: color-mix(in srgb, var(--app-bg) 64%, transparent);
+}
+
+.cropViewerCanvas {
+  display: block;
+  max-width: none;
+  max-height: none;
+  border-radius: 6px;
+  background: var(--app-bg);
+  cursor: grab;
+}
+
+.cropViewerCanvas.isDragging {
+  cursor: grabbing;
+}
+
+
+#modifyBoxesButton,
+#finishModifyingButton {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--button-bg));
+}
+
+#finishModifyingButton {
+  background: var(--primary-gradient);
+  color: #fffaf2;
+}
+
+.contributorReviewActions .contributorReviewUndo {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--accent-strong);
+}
+
+.contributorReviewDismiss {
+  position: absolute;
+  z-index: 2;
+  top: 5px;
+  right: 5px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  color: var(--app-text-strong);
+  background: color-mix(in srgb, var(--panel-bg-strong) 88%, transparent);
+  cursor: pointer;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.contributorReviewDismiss:hover,
+.contributorReviewDismiss:focus-visible {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+
+.correctionPanel {
+  display: none;
+  gap: 7px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 76%, transparent);
+}
+
+body.contributorMode .correctionPanel.isOpen {
+  display: grid;
+}
+
+.correctionPanel[hidden] {
+  display: none;
+}
+
+.correctionPanel label {
+  display: grid;
+  gap: 5px;
+}
+
+.correctionPanel label span {
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.correctionPanel input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-size: 16px;
+}
+
+.correctionSuggestions {
+  display: grid;
+  gap: 5px;
+}
+
+.correctionSuggestions:empty {
+  display: none;
+}
+
+.correctionCoverPanel {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-bg-strong));
+}
+
+.correctionCoverPanel[hidden] {
+  display: none;
+}
+
+.correctionCoverImage {
+  grid-row: 1 / span 2;
+  width: 92px;
+  height: 92px;
+  border-radius: 6px;
+  background: var(--app-bg);
+  object-fit: contain;
+}
+
+.correctionCoverName {
+  color: var(--app-text-strong);
+  font-size: 15px;
+  line-height: 1.15;
+}
+
+.correctionCoverQuestion {
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.correctionCoverActions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.correctionCoverActions button {
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--app-text-strong);
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.correctionCoverActions button:first-child {
+  border-color: color-mix(in srgb, var(--success) 48%, transparent);
+  background: color-mix(in srgb, var(--success) 18%, var(--panel-bg));
+}
+
+.correctionCoverActions button:last-child {
+  background: var(--button-bg);
+}
+
+.correctionSuggestion {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--app-faint);
+  color: var(--app-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.correctionSuggestion:hover,
+.correctionSuggestion:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  outline: none;
+}
+
+.correctionSuggestion span {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.correctionSuggestion small {
+  overflow: hidden;
+  color: var(--app-soft);
+  font-size: 11px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.correctionActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.correctionActions button {
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--app-text-strong);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.correctionActions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.correctionSaveButton {
+  background: var(--success);
+  color: #fffaf2;
+}
+
+.correctionCancelButton {
+  background: var(--button-bg);
+  color: var(--button-text);
+}
+
+.correctionStatus {
+  min-height: 15px;
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+
+/* ===========================================================================
+   6. Match card and matches strip
+   ---------------------------------------------------------------------------
+   Everything for the strip and its cards, gathered here in its original
+   cascade order. It was previously scattered over ~1,400 lines, which is how
+   one rule came to be written three times and why overrides kept landing
+   before the rules they meant to beat.
+   =========================================================================== */
+
+body.manualBoxMode #topBar,
+body.manualBoxMode #filterPanel,
+body.manualBoxMode #resultsPanel,
+body.manualBoxMode #showMatchesButton,
+body.manualBoxMode #examplePanel {
+  display: none;
+}
+
+#missingBoxesButton[hidden] {
+  display: none;
+}
+
+/* Offering a fix for a bad detection belongs beside the results, not in a
+   permanent bar of buttons. Plain text, because it is a question rather than a
+   primary action. */
+#resultCount {
+  flex: 0 0 auto;
+  color: var(--app-text-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+#missingBoxesButton {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 400;
+  text-decoration: underline;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#missingBoxesButton:hover,
+#missingBoxesButton:focus-visible {
+  color: var(--app-text-strong);
+}
+
 /* Bottom sheet by default. The photo carries the answer now -- highlighted
    boxes and their labels -- so the panel must not bury it. A full-height side
    column only earns its place where there is room for both, which is why it
@@ -1689,23 +2079,6 @@ body.imagePreview #uploadButton {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-#hideResultsButton,
-#showMatchesButton {
-  position: fixed;
-  right: 12px;
-  bottom: calc(84px + env(safe-area-inset-bottom));
-  z-index: 4;
-  min-height: 42px;
-  padding: 10px 12px;
-  background: var(--primary-gradient);
-  color: #fffaf2;
-  box-shadow: 0 14px 32px color-mix(in srgb, var(--purple) 30%, transparent);
-}
-
-#showMatchesButton[hidden] {
-  display: none;
 }
 
 /* Cards scroll sideways in a single row of fixed-size tiles: a vertical list
@@ -2302,131 +2675,6 @@ html[data-theme="light"] #resultsGrid > .matchCard.isExpanded {
   cursor: zoom-in;
 }
 
-.cropZoomPreview {
-  position: fixed;
-  z-index: 12;
-  display: block;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: var(--panel-bg-strong);
-  box-shadow: 0 22px 58px color-mix(in srgb, var(--app-bg) 55%, transparent);
-  pointer-events: none;
-}
-
-.cropZoomPreview[hidden] {
-  display: none;
-}
-
-body.manualBoxMode .cropZoomPreview {
-  display: none !important;
-}
-
-.cropViewerOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 18;
-  display: grid;
-  padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
-  place-items: center;
-  background: var(--overlay-bg);
-}
-
-.cropViewerOverlay[hidden] {
-  display: none;
-}
-
-.cropViewerWindow {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  width: min(940px, calc(100vw - 28px));
-  height: min(760px, calc(100vh - 28px));
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: var(--panel-gradient);
-  box-shadow: var(--panel-shadow);
-  backdrop-filter: blur(18px);
-  overflow: hidden;
-}
-
-.cropViewerHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px;
-  border-bottom: 1px solid var(--panel-border);
-}
-
-.cropViewerHeader h2 {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--app-text-strong);
-  font-size: 16px;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cropViewerToolbar {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-}
-
-.cropViewerToolbar button {
-  min-width: 34px;
-  min-height: 34px;
-  padding: 7px 9px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--panel-bg-strong) 86%, transparent);
-  color: var(--app-text);
-  font-size: 13px;
-  font-weight: 850;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.cropViewerToolbar button:hover,
-.cropViewerToolbar button:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
-  color: var(--app-text-strong);
-  outline: none;
-}
-
-.cropViewerZoomValue {
-  min-width: 46px;
-  color: var(--accent-strong);
-  font-size: 12px;
-  font-weight: 850;
-  line-height: 1;
-  text-align: center;
-}
-
-.cropViewerScroller {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 14px;
-  background: color-mix(in srgb, var(--app-bg) 64%, transparent);
-}
-
-.cropViewerCanvas {
-  display: block;
-  max-width: none;
-  max-height: none;
-  border-radius: 6px;
-  background: var(--app-bg);
-  cursor: grab;
-}
-
-.cropViewerCanvas.isDragging {
-  cursor: grabbing;
-}
-
 /* Dismissing a match is a contributor action -- it is how a bad result gets
    taken out of the way during review. For a player it is a destructive control
    with no undo that offers them nothing. The X survives on an expanded card,
@@ -2490,45 +2738,6 @@ body:not(.contributorMode) #resultsGrid > .matchCard:not(.isExpanded) .cardDismi
   color: var(--accent-strong);
   font-size: 14px;
   font-weight: 750;
-}
-
-#modifyBoxesButton,
-#finishModifyingButton {
-  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
-  background: color-mix(in srgb, var(--accent) 18%, var(--button-bg));
-}
-
-#finishModifyingButton {
-  background: var(--primary-gradient);
-  color: #fffaf2;
-}
-
-.contributorReviewActions .contributorReviewUndo {
-  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
-  color: var(--accent-strong);
-}
-
-.contributorReviewDismiss {
-  position: absolute;
-  z-index: 2;
-  top: 5px;
-  right: 5px;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--panel-border);
-  border-radius: 999px;
-  color: var(--app-text-strong);
-  background: color-mix(in srgb, var(--panel-bg-strong) 88%, transparent);
-  cursor: pointer;
-  font-size: 19px;
-  line-height: 1;
-}
-
-.contributorReviewDismiss:hover,
-.contributorReviewDismiss:focus-visible {
-  border-color: var(--danger);
-  color: var(--danger);
 }
 
 .matchDiagnostic,
@@ -2695,198 +2904,6 @@ body.contributorMode .paligemmaHint:not([hidden]) {
   white-space: nowrap;
 }
 
-.correctionPanel {
-  display: none;
-  gap: 7px;
-  margin-top: 6px;
-  padding: 8px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--panel-bg-strong) 76%, transparent);
-}
-
-body.contributorMode .correctionPanel.isOpen {
-  display: grid;
-}
-
-.correctionPanel[hidden] {
-  display: none;
-}
-
-.correctionPanel label {
-  display: grid;
-  gap: 5px;
-}
-
-.correctionPanel label span {
-  color: var(--app-soft);
-  font-size: 12px;
-  line-height: 1;
-}
-
-.correctionPanel input {
-  width: 100%;
-  min-height: 42px;
-  padding: 9px 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: var(--input-bg);
-  color: var(--input-text);
-  font-size: 16px;
-}
-
-.correctionSuggestions {
-  display: grid;
-  gap: 5px;
-}
-
-.correctionSuggestions:empty {
-  display: none;
-}
-
-.correctionCoverPanel {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 8px 10px;
-  align-items: center;
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel-bg-strong));
-}
-
-.correctionCoverPanel[hidden] {
-  display: none;
-}
-
-.correctionCoverImage {
-  grid-row: 1 / span 2;
-  width: 92px;
-  height: 92px;
-  border-radius: 6px;
-  background: var(--app-bg);
-  object-fit: contain;
-}
-
-.correctionCoverName {
-  color: var(--app-text-strong);
-  font-size: 15px;
-  line-height: 1.15;
-}
-
-.correctionCoverQuestion {
-  color: var(--app-muted);
-  font-size: 12px;
-  line-height: 1.3;
-}
-
-.correctionCoverActions {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
-}
-
-.correctionCoverActions button {
-  min-height: 40px;
-  padding: 9px 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  color: var(--app-text-strong);
-  font-size: 13px;
-  font-weight: 850;
-  cursor: pointer;
-}
-
-.correctionCoverActions button:first-child {
-  border-color: color-mix(in srgb, var(--success) 48%, transparent);
-  background: color-mix(in srgb, var(--success) 18%, var(--panel-bg));
-}
-
-.correctionCoverActions button:last-child {
-  background: var(--button-bg);
-}
-
-.correctionSuggestion {
-  display: grid;
-  gap: 3px;
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: var(--app-faint);
-  color: var(--app-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.correctionSuggestion:hover,
-.correctionSuggestion:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  outline: none;
-}
-
-.correctionSuggestion span {
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 850;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.correctionSuggestion small {
-  overflow: hidden;
-  color: var(--app-soft);
-  font-size: 11px;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.correctionActions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
-}
-
-.correctionActions button {
-  min-height: 40px;
-  padding: 9px 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  color: var(--app-text-strong);
-  font-size: 13px;
-  font-weight: 850;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.correctionActions button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.correctionSaveButton {
-  background: var(--success);
-  color: #fffaf2;
-}
-
-.correctionCancelButton {
-  background: var(--button-bg);
-  color: var(--button-text);
-}
-
-.correctionStatus {
-  min-height: 15px;
-  color: var(--app-soft);
-  font-size: 12px;
-  line-height: 1.25;
-}
-
 .matchCard.feedbackConfirmed:not(.rejected) {
   border-color: color-mix(in srgb, var(--success) 72%, transparent);
 }
@@ -2894,6 +2911,7 @@ body.contributorMode .correctionPanel.isOpen {
 .matchCard.feedbackDenied {
   border-color: color-mix(in srgb, var(--danger) 72%, transparent);
 }
+
 
 @media (max-height: 520px) and (min-width: 681px) {
   body.cameraFrozen #controls,
