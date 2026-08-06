@@ -64,6 +64,8 @@ const exampleButtons = Array.from(document.querySelectorAll("[data-example-src]"
 const playersFilter = document.getElementById("playersFilter");
 const timeFilter = document.getElementById("timeFilter");
 const complexityFilter = document.getElementById("complexityFilter");
+const backButton = document.getElementById("backButton");
+const missingBoxesButton = document.getElementById("missingBoxesButton");
 const filterVisibilityButton = document.getElementById("filterVisibilityButton");
 const applyFiltersButton = document.getElementById("applyFiltersButton");
 const advancedFilterToggle = document.getElementById("advancedFilterToggle");
@@ -192,6 +194,8 @@ startCameraButton.addEventListener("click", startCameraFromTap);
 scanButton.addEventListener("click", scanCurrentView);
 backToCameraButton.addEventListener("click", backToLiveCamera);
 closeScanButton.addEventListener("click", closeActiveScan);
+backButton.addEventListener("click", closeActiveScan);
+missingBoxesButton.addEventListener("click", beginManualBoxMode);
 modifyBoxesButton.addEventListener("click", beginManualBoxMode);
 finishModifyingButton.addEventListener("click", endManualBoxMode);
 exitModifierButton.addEventListener("click", endManualBoxMode);
@@ -403,7 +407,7 @@ async function handleImageUpload() {
 
   clearResults();
   setControlsEnabled(false);
-  setStatus("Loading image...");
+  setStatus("Scanning...");
 
   try {
     await drawFileToCanvas(file, photoPreview);
@@ -517,7 +521,7 @@ async function processImageCanvas(sourceCanvas, displayElement) {
 
       updateResultStats();
       sortCards();
-      setStatus("Matching server offline. Boxes were detected.");
+      setStatus("Matcher offline");
       return;
     }
 
@@ -580,11 +584,7 @@ async function processImageCanvas(sourceCanvas, displayElement) {
     });
 
     if (token === scanToken) {
-      const outcome = filterOutcomeSummary();
-      const base = matchFailures
-        ? `${outcome || "Done."} ${matchFailures} match${matchFailures === 1 ? "" : "es"} failed.`
-        : (outcome || "Done.");
-      setStatus(`${base}${boxTapHintSuffix()}`);
+      setStatus(matchFailures ? "Some matches failed" : "Ready");
     }
   } catch (error) {
     console.error(error);
@@ -2264,7 +2264,17 @@ function createMatchCard(cropCanvas, detection, index) {
   });
   confirmButton.addEventListener("click", () => submitRecognitionFeedback(cardApi, "confirm"));
   denyButton.addEventListener("click", () => submitRecognitionFeedback(cardApi, "deny"));
-  dismissButton.addEventListener("click", () => dismissMatchCard(cardApi, 1));
+  dismissButton.addEventListener("click", (event) => {
+    // Expanded, the X reads as "close this" -- dismissing the match outright is
+    // a far more destructive thing than the icon suggests.
+    if (cardApi.card.classList.contains("isExpanded")) {
+      event.stopPropagation();
+      toggleCardExpanded(cardApi, cardApi.card.querySelector(".cardExpandButton"));
+      return;
+    }
+
+    dismissMatchCard(cardApi, 1);
+  });
   findGameButton.addEventListener("click", () => {
     // Collapse first: expanded, this card covers the lower part of the photo,
     // so the pulse it triggers plays behind it and looks like nothing happened.
@@ -2278,6 +2288,10 @@ function createMatchCard(cropCanvas, detection, index) {
   });
   reportWrongButton.addEventListener("click", (event) => {
     event.stopPropagation();
+    // Collapse first so the card is not removed out from under an open panel.
+    if (cardApi.card.classList.contains("isExpanded")) {
+      toggleCardExpanded(cardApi, cardApi.card.querySelector(".cardExpandButton"));
+    }
     submitRecognitionFeedback(cardApi, "deny");
   });
   enableCropHoverPreview(cropCanvas);
@@ -2392,10 +2406,7 @@ function selectMatchCard(cardApi) {
   cardApi.card.classList.add("isSelected");
   redrawActiveDetections();
 
-  const best = cardApi.matches[0];
-  setStatus(best
-    ? `${best.name} highlighted in the photo.`
-    : "Selected box highlighted in the photo.");
+
 }
 
 function clearSelectedMatchCard() {
@@ -5368,13 +5379,6 @@ function handleFilterChange() {
 
   refreshResultCards();
 
-  // Retightening the filters after a scan changes which boxes stay lit, so the
-  // count has to keep up. Only on an explicit filter change, so this never
-  // clobbers transient messages like "<game> highlighted in the photo."
-  const outcome = filterOutcomeSummary();
-  if (outcome) {
-    setStatus(outcome);
-  }
 }
 
 function refreshResultCards() {
@@ -6109,11 +6113,18 @@ function syncTopPanelHeight() {
   // wraps and the row is hidden in other modes.
   const controlsVisible = document.body.classList.contains("imagePreview")
     && !document.body.classList.contains("manualBoxMode");
-  const controlsHeight = controlsVisible
+  // The scan-view controls bar no longer exists; only the title bar occupies
+  // the top during a scan.
+  const controlsHeight = controlsVisible && controls.offsetParent
     ? controls.getBoundingClientRect().height
     : 0;
+  // The filter panel is permanent chrome, so the photo has to clear it too.
+  // Measured from its rect rather than offsetParent, which is null for a
+  // fixed-position element and silently reported it as absent.
+  const filters = document.getElementById("filterPanel");
+  const filtersHeight = filters ? filters.getBoundingClientRect().height : 0;
 
-  const next = Math.round(barHeight + controlsHeight);
+  const next = Math.round(barHeight + controlsHeight + filtersHeight);
   const previous = document.documentElement.style.getPropertyValue("--topchrome-height");
 
   document.documentElement.style.setProperty("--topbar-height", `${Math.round(barHeight)}px`);
@@ -6531,9 +6542,11 @@ function updateResultStats() {
   const matched = currentResultCards.filter((card) => card.fitsFilters).length;
   const checked = currentResultCards.filter((card) => card.matches.length || card.matchFailed).length;
 
-  resultCount.textContent = filters.hasAny && matched
-    ? `${matched}/${currentResultCards.length} fit`
-    : `${checked}/${currentResultCards.length} checked`;
+  // Reads as a statement about the scan rather than a bare ratio, so the
+  // follow-up question beside it lands as part of the same thought.
+  resultCount.textContent = filters.hasAny
+    ? `${matched} of ${currentResultCards.length} fit your filters`
+    : `${checked} of ${currentResultCards.length} recognised`;
 }
 
 // The matches panel now stays closed after a scan, so its "2/5 fit" counter is
@@ -6657,6 +6670,8 @@ function setControlsEnabled(enabled) {
   }
   filterImageModeActive = imageModeActive;
   filterVisibilityButton.hidden = manualBoxMode;
+  backButton.hidden = !imagePreviewActive || manualBoxMode;
+  missingBoxesButton.hidden = !imagePreviewActive || manualBoxMode;
   requestAnimationFrame(syncTopPanelHeight);
   // Flow A: tapping the status line toggles the action row on touch, where
   // there is no hover.

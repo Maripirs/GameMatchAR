@@ -382,6 +382,56 @@ body.manualBoxMode #zoomInButton {
   gap: 8px;
 }
 
+#backButton[hidden],
+#missingBoxesButton[hidden] {
+  display: none;
+}
+
+#backButton svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Offering a fix for a bad detection belongs beside the results, not in a
+   permanent bar of buttons. Plain text, because it is a question rather than a
+   primary action. */
+#resultCount {
+  flex: 0 0 auto;
+  color: var(--app-text-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+#missingBoxesButton {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 400;
+  text-decoration: underline;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#missingBoxesButton:hover,
+#missingBoxesButton:focus-visible {
+  color: var(--app-text-strong);
+}
+
+/* The dedicated Close Scan / Modify boxes / Upload bar is gone: back replaces
+   the first, the strip link the second, and Upload belongs to the landing
+   screen. */
+body.imagePreview:not(.manualBoxMode) #controls {
+  display: none;
+}
+
 /* While a scan is on screen the action row moves up under the title instead of
    holding a full-width band at the bottom, which the photo can now use. */
 /* One panel at the top instead of three floating pieces: the title/status and
@@ -435,8 +485,11 @@ body.imagePreview:not(.manualBoxMode) #topBar {
    photo, not at "Modify boxes". They collapse to a slim row that only reveals
    itself on hover/focus, and the title shrinks to a single line. The photo
    takes everything that frees up. */
+/* The name stays. The match count moved to the strip header, so the top bar
+   carries identity plus a short system state -- not a running commentary. */
 body.imagePreview:not(.manualBoxMode) #topBar h1 {
-  display: none;
+  font-size: 17px;
+  margin-bottom: 1px;
 }
 
 body.imagePreview:not(.manualBoxMode) #controls {
@@ -497,15 +550,14 @@ body.imagePreview:not(.manualBoxMode) #controls button {
   font-size: 13px;
 }
 
+/* The title block is the panel's content, not a card sitting on it -- its own
+   border, background and shadow read as a box inside a box. Centred as a unit
+   so the status line sits under the name rather than beside it. */
 #topBar > div:first-child {
   min-width: 0;
-  max-width: min(650px, calc(100vw - 74px));
-  padding: 8px 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--panel-bg-strong) 82%, transparent);
-  box-shadow: 0 12px 30px color-mix(in srgb, var(--app-bg) 34%, transparent);
-  backdrop-filter: blur(16px);
+  flex: 1 1 auto;
+  padding: 0;
+  text-align: center;
   pointer-events: none;
 }
 
@@ -607,12 +659,33 @@ body.contributorMode #infoButton {
   overflow: auto;
 }
 
+/* Close sits exactly where the button that opened the panel is, so it does not
+   travel across the screen between opening and closing. #infoButton lives at
+   the top-right of the anchored bar; this matches its offsets. */
 #infoHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 12px;
+  padding-right: 44px;
+}
+
+#infoCloseButton {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  right: 12px;
+  z-index: 1;
+}
+
+#infoCloseButton svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 #infoHeader h2 {
@@ -1007,25 +1080,43 @@ body.contributorMode #infoButton {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+/* Always on screen, like the matches strip: small enough to live there, so it
+   needs no toggle, no Done button and no collapsed state to reason about. */
 #filterPanel {
   position: fixed;
-  top: calc(max(14px, env(safe-area-inset-top)) + 64px);
-  left: 12px;
-  z-index: 3;
-  width: min(430px, calc(100vw - 24px));
-  padding: 11px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: var(--panel-bg);
-  backdrop-filter: blur(16px);
-  box-shadow: 0 12px 34px color-mix(in srgb, var(--app-bg) 38%, transparent);
+  top: var(--topbar-height, 46px);
+  right: 0;
+  left: 0;
+  z-index: 4;
+  margin: 0;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--panel-border);
+  background: var(--panel-bg-strong);
+  backdrop-filter: blur(14px);
+}
+
+/* Three equal columns. Dropping the toggle and Done leaves ~120px each, which
+   is what made this fit where a four-column version did not. */
+#filterGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#filterGrid input,
+#filterGrid select {
+  width: 100%;
+  min-width: 0;
+}
+
+/* No longer needed: the panel never closes. */
+#filterActions,
+#filterVisibilityButton {
+  display: none;
 }
 
 /* The panel is collapsible everywhere, not just over a photo, so that Done and
    the Filters toggle behave the same on every screen. It starts open. */
-body:not(.filterPanelOpen) #filterPanel {
-  display: none;
-}
+
 
 /* Laid out by the top bar now rather than floating over it at a fixed offset. */
 #filterVisibilityButton {
@@ -2426,6 +2517,14 @@ body.manualBoxMode .cropZoomPreview {
 
 .cropViewerCanvas.isDragging {
   cursor: grabbing;
+}
+
+/* Dismissing a match is a contributor action -- it is how a bad result gets
+   taken out of the way during review. For a player it is a destructive control
+   with no undo that offers them nothing. The X survives on an expanded card,
+   where it closes the card rather than discarding the match. */
+body:not(.contributorMode) #resultsGrid > .matchCard:not(.isExpanded) .cardDismissButton {
+  display: none;
 }
 
 .cardDismissButton {

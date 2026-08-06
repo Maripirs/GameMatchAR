@@ -107,7 +107,9 @@ def run(headed):
 
         print("\nlanding")
         c.check("filter panel starts open", page.is_visible("#filterPanel"))
-        c.check("Done button present", page.is_visible("#applyFiltersButton"))
+        # The filter panel is permanent now: no toggle, no Done, no collapsed
+        # state -- so the controls are simply always reachable.
+        c.check("filter controls always reachable", page.is_visible("#playersFilter"))
         c.check(
             "filter defaults are 2 / 30 / medium",
             [
@@ -204,10 +206,21 @@ def run(headed):
         page.wait_for_timeout(200)
         page.fill("#playersFilter", "9")
         page.wait_for_timeout(600)
+        # The count lives in the strip header now; the top bar carries identity
+        # plus a short system state.
         c.check(
             "impossible filter reports no fits",
-            "None of the" in page.inner_text("#status"),
-            f'(got "{page.inner_text("#status")}")',
+            "0 of" in page.inner_text("#resultCount"),
+            f'(count "{page.inner_text("#resultCount")}")',
+        )
+        c.check(
+            "top bar keeps the app name",
+            page.inner_text("#topBar h1").strip() == "GameMatch",
+        )
+        c.check(
+            "top status stays terse",
+            len(page.inner_text("#status")) <= 32,
+            f'(status "{page.inner_text("#status")}")',
         )
         page.fill("#playersFilter", "2")
         page.wait_for_timeout(600)

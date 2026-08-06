@@ -24,6 +24,9 @@
     <canvas id="capture" hidden></canvas>
 
     <section id="topBar">
+      <button id="backButton" class="topIconButton" type="button" aria-label="Back" title="Back" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg>
+      </button>
       <div>
         <h1>GameMatch</h1>
         <p id="status">Starting...</p>
@@ -40,7 +43,9 @@
       <div id="infoSheet">
         <div id="infoHeader">
           <h2>How GameMatch Works</h2>
-          <button id="infoCloseButton" class="ghostButton" type="button">Close</button>
+          <button id="infoCloseButton" class="topIconButton" type="button" aria-label="Close info" title="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+          </button>
         </div>
         <div id="infoContent">
           <p>Choose your player count, time, and complexity filters, then scan a shelf or upload a photo.</p>
@@ -237,9 +242,9 @@
 
     <section id="resultsPanel" hidden>
       <div id="resultsHeader">
-        <strong>Matches</strong>
+        <span id="resultCount"></span>
+        <button id="missingBoxesButton" type="button">Missing a game?</button>
         <div id="resultsHeaderActions">
-          <span id="resultCount"></span>
           <button id="hideResultsButton" type="button">Hide</button>
         </div>
       </div>
