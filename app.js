@@ -45,7 +45,6 @@ const boxEditActions = document.getElementById("boxEditActions");
 const deleteSelectedBoxButton = document.getElementById("deleteSelectedBoxButton");
 const confirmSelectedBoxButton = document.getElementById("confirmSelectedBoxButton");
 const exitModifierButton = document.getElementById("exitModifierButton");
-const statusText = document.getElementById("status");
 const startCameraButton = document.getElementById("startCameraButton");
 const scanButton = document.getElementById("scanButton");
 const backToCameraButton = document.getElementById("backToCameraButton");
@@ -62,6 +61,8 @@ const imageUpload = document.getElementById("imageUpload");
 const examplePanel = document.getElementById("examplePanel");
 const exampleButtons = Array.from(document.querySelectorAll("[data-example-src]"));
 const playersFilter = document.getElementById("playersFilter");
+const bestPlayerCountFilter = document.getElementById("bestPlayerCountFilter");
+const bestPlayerCountField = document.getElementById("bestPlayerCountField");
 const timeFilter = document.getElementById("timeFilter");
 const complexityFilter = document.getElementById("complexityFilter");
 const backButton = document.getElementById("backButton");
@@ -151,7 +152,6 @@ let detectionPulseFrame = 0;
 // the box itself must stay greyed out on the photo.
 const rejectedDetections = new Set();
 let selectedMatchCard = null;
-let startupStatusActive = true;
 let contributorMode = false;
 let contributorRole = "";
 let contributorPassword = "";
@@ -229,11 +229,23 @@ for (const button of contributorTabButtons) {
 contributorReviewRefreshButton.addEventListener("click", () => loadContributorReview({ force: true }));
 detectorReviewRefreshButton.addEventListener("click", () => loadDetectorReview({ force: true }));
 startDetectorTrainingButton.addEventListener("click", startDetectorTraining);
-[playersFilter, timeFilter, complexityFilter, minRatingFilter, maxRankFilter, gameTypeFilter, expansionFilter, minYearFilter].forEach((control) => {
+[playersFilter, bestPlayerCountFilter, timeFilter, complexityFilter, minRatingFilter, maxRankFilter, gameTypeFilter, expansionFilter, minYearFilter].forEach((control) => {
   control.addEventListener("input", handleFilterChange);
   control.addEventListener("change", handleFilterChange);
 });
 applyFiltersButton.addEventListener("click", closeFilterPanel);
+// Local-only: see index.html for the guard. Enables the contributor UI without
+// a password so it can be inspected; the server still rejects every contributor
+// request, so nothing privileged actually works.
+if (window.GAMEMATCH_FORCE_CONTRIBUTOR) {
+  contributorRole = "admin";
+  // A placeholder password: the feedback paths bail early without one, so
+  // without it the contributor flows cannot be exercised at all. The server
+  // rejects it, which is the point -- this reveals the UI, not access.
+  contributorPassword = "local-preview";
+  setContributorMode(true);
+}
+
 // Filters lead on first load, so the panel starts open on every screen.
 setFilterPanelOpen(true);
 window.addEventListener("resize", () => {
@@ -298,17 +310,14 @@ window.addEventListener("keydown", (event) => {
 async function main() {
   setContributorMode(false);
   setControlsEnabled(true);
-  setStatus("Loading scanner...");
   restoreStoredContributorLogin();
   preloadStartupModels();
 }
 
 async function startCameraFromTap() {
-  startupStatusActive = false;
   setControlsEnabled(false);
   clearResults();
   showCamera();
-  setStatus("Starting camera...");
 
   try {
     const settings = await startCamera(video);
@@ -317,19 +326,15 @@ async function startCameraFromTap() {
     cameraReady = true;
     activeSourceCanvas = null;
     activeDisplayElement = video;
-    setStatus(`Camera${facing}.`);
   } catch (error) {
     console.error(error);
     cameraReady = false;
-    setStatus(cameraErrorMessage(error));
   }
 
   setControlsEnabled(true);
 }
 
 async function switchCameraFromTap() {
-  startupStatusActive = false;
-
   if (!cameraReady) {
     await startCameraFromTap();
     return;
@@ -338,25 +343,19 @@ async function switchCameraFromTap() {
   setControlsEnabled(false);
   clearResults();
   showCamera();
-  setStatus("Switching camera...");
 
   try {
     const settings = await switchCamera(video);
     const facing = settings.facingMode ? ` ${settings.facingMode}` : "";
-    setStatus(`Camera${facing}.`);
   } catch (error) {
     console.error(error);
-    setStatus("Could not switch camera.");
   }
 
   setControlsEnabled(true);
 }
 
 async function scanCurrentView() {
-  startupStatusActive = false;
-
   if (isCameraFrameFrozen()) {
-    setStatus("Tap Back to Camera before scanning again.");
     return;
   }
 
@@ -366,7 +365,6 @@ async function scanCurrentView() {
   }
 
   if (!cameraReady || !video.videoWidth || !video.videoHeight) {
-    setStatus("Camera is not ready.");
     return;
   }
 
@@ -382,7 +380,6 @@ function backToLiveCamera() {
   clearResults();
   showCamera();
   setControlsEnabled(true);
-  setStatus("Camera live.");
 }
 
 function closeActiveScan() {
@@ -391,12 +388,9 @@ function closeActiveScan() {
   activeSourceCanvas = null;
   activeDisplayElement = video;
   setControlsEnabled(true);
-  setStatus("");
 }
 
 async function handleImageUpload() {
-  startupStatusActive = false;
-
   const file = imageUpload.files?.[0];
   imageUpload.value = "";
 
@@ -406,7 +400,6 @@ async function handleImageUpload() {
 
   clearResults();
   setControlsEnabled(false);
-  setStatus("Scanning...");
 
   try {
     await drawFileToCanvas(file, photoPreview);
@@ -416,15 +409,12 @@ async function handleImageUpload() {
     await processImageCanvas(photoPreview, photoPreview);
   } catch (error) {
     console.error("Could not read uploaded image:", uploadFileDebugInfo(file), error);
-    setStatus(uploadImageErrorText(file, error));
   }
 
   setControlsEnabled(true);
 }
 
 async function scanExampleImage(button) {
-  startupStatusActive = false;
-
   const src = button.dataset.exampleSrc;
   const label = button.dataset.exampleLabel || "example";
 
@@ -433,20 +423,16 @@ async function scanExampleImage(button) {
   }
 
   clearResults();
-  resetMockMatchCursor();
   setControlsEnabled(false);
-  setStatus(`Loading ${label}...`);
 
   try {
     await drawImageUrlToCanvas(src, photoPreview);
-    rememberMockSource(photoPreview, src);
     activeSourceCanvas = photoPreview;
     activeDisplayElement = photoPreview;
     showPhotoPreview();
     await processImageCanvas(photoPreview, photoPreview);
   } catch (error) {
     console.error(`Could not load example image ${src}:`, error);
-    setStatus("Could not load that example image.");
   }
 
   setControlsEnabled(true);
@@ -457,10 +443,8 @@ async function processImageCanvas(sourceCanvas, displayElement) {
 
   setControlsEnabled(false);
   clearResults(false);
-  setStatus("Detecting boxes...");
 
   try {
-    setStatus("Loading detector...");
     await ensureDetectorLoaded();
 
     const detections = await detector.detect(sourceCanvas);
@@ -485,14 +469,12 @@ async function processImageCanvas(sourceCanvas, displayElement) {
     }
 
     if (!confident.length) {
-      setStatus("No boxes found.");
       return;
     }
 
     const cappedMessage = allConfident.length > confident.length
       ? ` Top ${confident.length} only.`
       : "";
-    setStatus(`Matching ${confident.length} box${confident.length === 1 ? "" : "es"}...${cappedMessage}`);
     showResultShell(confident.length);
 
     const cards = confident.map((detection, index) => {
@@ -500,9 +482,7 @@ async function processImageCanvas(sourceCanvas, displayElement) {
       return createMatchCard(cropCanvas, detection, index);
     });
     currentResultCards = cards;
-    let matchFailures = 0;
 
-    setStatus("Checking matcher...");
 
     try {
       await ensureBackendMatcherReady({ force: true });
@@ -520,12 +500,10 @@ async function processImageCanvas(sourceCanvas, displayElement) {
 
       updateResultStats();
       sortCards();
-      setStatus("Matcher offline");
       return;
     }
 
     setResultsNotice("");
-    setStatus(`Matching ${confident.length} box${confident.length === 1 ? "" : "es"}...`);
 
     await processWithConcurrency(cards, MATCH_CONCURRENCY, async (card, index) => {
       if (token !== scanToken || card.dismissed) {
@@ -561,7 +539,9 @@ async function processImageCanvas(sourceCanvas, displayElement) {
         ]);
         card.setMatches(matches);
 
-        if (card.isConfident && !card.details) {
+        // Details are shown for a player whatever the confidence, so they have
+        // to be fetched for those cards too -- not only the confident ones.
+        if (!card.details) {
           await card.resolveDetails();
         }
       } catch (error) {
@@ -569,7 +549,6 @@ async function processImageCanvas(sourceCanvas, displayElement) {
           return;
         }
 
-        matchFailures += 1;
         console.warn(`Crop ${index + 1} match failed:`, error);
         card.setError("Match failed", {
           meta: "Server did not return a match",
@@ -581,13 +560,8 @@ async function processImageCanvas(sourceCanvas, displayElement) {
       updateResultStats();
       sortCards();
     });
-
-    if (token === scanToken) {
-      setStatus(matchFailures ? "Some matches failed" : "");
-    }
   } catch (error) {
     console.error(error);
-    setStatus("Scan failed.");
   } finally {
     setControlsEnabled(true);
   }
@@ -621,7 +595,6 @@ function beginManualBoxMode() {
   // to be remeasured against the new box or the boxes sit where the photo used
   // to be.
   requestAnimationFrame(redrawActiveDetections);
-  setStatus("Drag to add a missed box, or tap an existing box to adjust it.");
 }
 
 function endManualBoxMode() {
@@ -644,7 +617,6 @@ function endManualBoxMode() {
   showResultsPanel();
   // Same in reverse: the strip returns and the photo shrinks again.
   requestAnimationFrame(redrawActiveDetections);
-  setStatus("Finished modifying boxes.");
 }
 
 function dismissDinoSuggestion() {
@@ -653,7 +625,6 @@ function dismissDinoSuggestion() {
   }
   dinoSuggestButton.hidden = true;
   dismissDinoSuggestButton.hidden = true;
-  setStatus("Automatic box detection dismissed.");
 }
 
 async function suggestDinoBoxes() {
@@ -665,7 +636,6 @@ async function suggestDinoBoxes() {
   dismissDinoSuggestButton.hidden = true;
   sourceCanvas.dinoSuggestionCompleted = true;
   dinoSuggestButton.textContent = "Detecting more boxes...";
-  setStatus("DINO is looking for missed boxes...");
   try {
     const formData = new FormData();
     formData.append(
@@ -712,7 +682,6 @@ async function suggestDinoBoxes() {
         && box.height >= 16
       ));
     if (!suggestions.length) {
-      setStatus("DINO did not find any additional boxes.");
       await finishDinoSuggestionButton("Done — no additional boxes");
       return;
     }
@@ -730,10 +699,6 @@ async function suggestDinoBoxes() {
     currentResultCards.push(...cards);
     showResultShell(currentResultCards.length);
     hideResultsPanel();
-    setStatus(
-      `DINO added ${suggestions.length} possible ${suggestions.length === 1 ? "box" : "boxes"}. `
-      + "Tap any incorrect purple box to remove it. Matching the new boxes...",
-    );
     dinoSuggestButton.textContent = `Matching ${suggestions.length} new ${
       suggestions.length === 1 ? "box" : "boxes"
     }...`;
@@ -751,7 +716,9 @@ async function suggestDinoBoxes() {
           ensurePlayerExpansionIndexLoaded(),
         ]);
         card.setMatches(matches);
-        if (card.isConfident && !card.details) {
+        // Details are shown for a player whatever the confidence, so they have
+        // to be fetched for those cards too -- not only the confident ones.
+        if (!card.details) {
           await card.resolveDetails();
         }
       } catch (error) {
@@ -766,14 +733,9 @@ async function suggestDinoBoxes() {
       updateResultStats();
       sortCards();
     });
-    setStatus(
-      `DINO added and matched ${suggestions.length} possible `
-      + `${suggestions.length === 1 ? "box" : "boxes"}. Tap incorrect purple boxes to remove them.`,
-    );
     await finishDinoSuggestionButton("Done");
   } catch (error) {
     console.warn("DINO box suggestion failed:", error);
-    setStatus(error.message || "Could not generate automatic boxes.");
     await finishDinoSuggestionButton("Could not detect more boxes");
   }
 }
@@ -845,7 +807,6 @@ function changeModifierZoom(delta) {
   modifierPanY = clampModifierPanY(modifierPanY);
   applyModifierZoom();
   redrawActiveDetections();
-  setStatus(`Detection modifier zoom: ${Math.round(modifierZoom * 100)}%.`);
 }
 
 function scrollModifierImage(event) {
@@ -1178,7 +1139,6 @@ function finishManualBox(event) {
     manualBoxGesture = null;
     positionBoxEditActions();
     redrawActiveDetections();
-    setStatus("Adjust the box, then tap the checkmark to keep it.");
     event.preventDefault();
     return;
   }
@@ -1207,7 +1167,6 @@ function finishManualBox(event) {
 
   if (!detection || detection.width < 16 || detection.height < 16) {
     redrawActiveDetections();
-    setStatus("Drag a larger rectangle to add a box, or click an existing box to adjust it.");
     return;
   }
 
@@ -1338,7 +1297,6 @@ function selectBoxForEditing(detection) {
   boxEditActions.hidden = false;
   redrawActiveDetections();
   positionBoxEditActions();
-  setStatus("Drag the handles to resize, drag the outline to move, then confirm or delete.");
 }
 
 function selectedBoxHandleAtPoint(point) {
@@ -1469,7 +1427,6 @@ function confirmSelectedBox() {
   boxEditActions.hidden = true;
   if (!changed) {
     redrawActiveDetections();
-    setStatus("Box confirmed.");
     return;
   }
   removeDetection(original);
@@ -1540,10 +1497,8 @@ function removeDetection(detection) {
   if (contributorMode) {
     queueContributorDetectorAnnotationSave(sourceCanvas).catch((error) => {
       console.warn("Could not save detector annotation:", error);
-      setStatus("Box removed, but the detector correction could not be saved.");
     });
   }
-  setStatus(detection.manual ? "Removed the manually added box." : "Removed the incorrect detector box.");
 }
 
 async function addManualDetection(detection) {
@@ -1562,12 +1517,10 @@ async function addManualDetection(detection) {
   showResultShell(currentResultCards.length);
   updateResultStats();
   hideResultsPanel();
-  setStatus("Matching the manually added box...");
 
   if (contributorMode) {
     queueContributorDetectorAnnotationSave(sourceCanvas).catch((error) => {
       console.warn("Could not save detector annotation:", error);
-      setStatus("Box added, but the detector annotation could not be saved.");
     });
   }
 
@@ -1579,10 +1532,9 @@ async function addManualDetection(detection) {
       ensurePlayerExpansionIndexLoaded(),
     ]);
     card.setMatches(matches);
-    if (card.isConfident && !card.details) {
+    if (!card.details) {
       await card.resolveDetails();
     }
-    setStatus("Manual box added and matched.");
   } catch (error) {
     console.warn("Manual box match failed:", error);
     card.setError("Match failed", {
@@ -1616,10 +1568,6 @@ function queueContributorDetectorAnnotationSave(sourceCanvas) {
 }
 
 async function saveContributorDetectorAnnotation(sourceCanvas) {
-  const hasCorrections = (
-    sourceCanvas.manualDetections?.length
-    || sourceCanvas.removedDetectorDetections?.length
-  );
   if (
     !contributorMode
     || !contributorPassword
@@ -1666,12 +1614,6 @@ async function saveContributorDetectorAnnotation(sourceCanvas) {
     sourceCanvas.detectorAnnotationId = result.annotation_id;
   }
   sourceCanvas.detectorAnnotationSaved = true;
-  if (hasCorrections) {
-    setStatus(
-      `Saved ${result.manual_boxes} added and ${result.removed_boxes} removed detector correction`
-      + `${result.manual_boxes + result.removed_boxes === 1 ? "" : "s"}.`,
-    );
-  }
 }
 
 function createDetectorAnnotationId() {
@@ -1693,14 +1635,6 @@ function ensureDetectorLoaded() {
 }
 
 function ensureBackendMatcherReady({ force = false } = {}) {
-  // Mock mode never talks to a backend, so probing for one only produces a
-  // spurious "matching server offline" and blocks the results it is standing in
-  // for. Short-circuited here rather than at the call sites -- there are four.
-  if (mockMatchesEnabled()) {
-    backendMatcherAvailable = true;
-    backendMatcherUnavailable = false;
-    return Promise.resolve(true);
-  }
 
   if (backendMatcherUnavailable && !force) {
     return Promise.reject(new Error("Backend matcher is unavailable."));
@@ -1737,75 +1671,7 @@ function ensureBackendMatcherReady({ force = false } = {}) {
   return backendMatcherLoadPromise;
 }
 
-// Development aid: canned matches for the bundled example photos, so UI work
-// does not require a round trip and a confirm/deny pass on every reload. Enabled
-// with ?mock=1 and only honoured on localhost -- see the guard in index.html.
-const MOCK_MATCHES = {
-  // Listed top to bottom as they sit in the photo.
-  "game-bag": [
-    { id: 315631, name: "Santorini: New York", score: 0.94 },
-    { id: 334065, name: "Verdant", score: 0.93 },
-    { id: 201808, name: "Clank!: A Deck-Building Adventure", score: 0.92 },
-    { id: 325698, name: "Juicy Fruits", score: 0.91 },
-    { id: 340677, name: "Bad Company", score: 0.9 },
-  ],
-  "game-shelf": [
-    { id: 295486, name: "My City", score: 0.92 },
-    { id: 230802, name: "Azul", score: 0.91 },
-    { id: 122515, name: "Kingsburg", score: 0.9 },
-    { id: 284083, name: "Whistle Mountain", score: 0.89 },
-  ],
-};
-
-let mockMatchCursor = 0;
-
-function mockMatchesEnabled() {
-  return Boolean(window.GAMEMATCH_MOCK_MATCHES);
-}
-
-function resetMockMatchCursor() {
-  mockMatchCursor = 0;
-}
-
-function mockMatchFor(sourceLabel, detection = null) {
-  const key = Object.keys(MOCK_MATCHES).find((name) => (sourceLabel || "").includes(name));
-  const pool = MOCK_MATCHES[key] || MOCK_MATCHES["game-bag"];
-
-  // Fixtures are listed in the order the games appear down the photo, so a box
-  // is matched by its vertical rank. Crops are processed concurrently, and that
-  // order has nothing to do with where the boxes actually are.
-  let index = mockMatchCursor % pool.length;
-  const detections = activeSourceCanvas?.lastDetections;
-
-  if (detection && Array.isArray(detections)) {
-    const ordered = [...detections].sort((a, b) => a.y - b.y);
-    const rank = ordered.indexOf(detection);
-
-    if (rank >= 0) {
-      index = rank % pool.length;
-    }
-  }
-
-  mockMatchCursor += 1;
-  const entry = pool[index];
-
-  return [{
-    id: entry.id,
-    name: entry.name,
-    score: entry.score,
-    rank_score: entry.score,
-    source: "bgg_cover",
-    reference_image_path: "",
-  }];
-}
-
 async function matchCrop(cropCanvas, setPending, detection = null) {
-  if (mockMatchesEnabled()) {
-    setPending("Matching (mock)...");
-    await new Promise((resolve) => window.setTimeout(resolve, 120));
-    return mockMatchFor(activeSourceCanvas?.mockSourceLabel || "", detection);
-  }
-
   setPending("Matching on server...");
   await ensureBackendMatcherReady();
   return matchCropWithBackend(cropCanvas);
@@ -1874,7 +1740,7 @@ async function preloadStartupModels() {
       console.log(`Startup loaded ${name}.`);
     })
   );
-  const backendResult = await backendTask;
+  await backendTask;
   const failed = results
     .map((result, index) => ({ result, name: requiredTasks[index][0] }))
     .filter(({ result }) => result.status === "rejected");
@@ -1887,17 +1753,6 @@ async function preloadStartupModels() {
         error: result.reason,
       }))
     );
-    if (startupStatusActive) {
-      setStatus("Scanner did not finish loading. Scan will retry.");
-    }
-
-    return;
-  }
-
-  if (startupStatusActive) {
-    setStatus(backendResult.ok
-      ? "Ready."
-      : "Ready. Matching server offline; boxes can still be detected.");
   }
 }
 
@@ -1975,6 +1830,7 @@ function createMatchCard(cropCanvas, detection, index) {
   fit.textContent = "Checking filters";
   confirmButton.type = "button";
   denyButton.type = "button";
+  // Contributor-only; updateFeedbackActions hides the pair for a player.
   confirmButton.textContent = "Yes";
   denyButton.textContent = "No";
   correctionLabelText.textContent = "Correct game";
@@ -2021,12 +1877,15 @@ function createMatchCard(cropCanvas, detection, index) {
   feedbackActions.append(confirmButton, denyButton, feedbackStatus);
   reportWrongButton.className = "cardReportWrongButton";
   reportWrongButton.type = "button";
-  reportWrongButton.textContent = "Report wrong match";
+  reportWrongButton.textContent = "Wrong game?";
+  reportWrongButton.setAttribute("aria-label", "This is not the game in the picture");
   expandButton.className = "cardExpandButton";
   expandButton.type = "button";
   expandButton.textContent = "See more";
   expandButton.setAttribute("aria-expanded", "false");
-  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, findGameButton, feedbackActions, reportWrongButton, correctionPanel, expandButton);
+  // Directly under the details it disputes, so it reads as a footnote to the
+  // facts above it rather than as another action competing with them.
+  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, reportWrongButton, findGameButton, feedbackActions, correctionPanel, expandButton);
   card.append(dismissButton, cropCanvas, body);
   card.tabIndex = 0;
   card.setAttribute("aria-label", `Highlight box ${index + 1} in the photo`);
@@ -2047,6 +1906,9 @@ function createMatchCard(cropCanvas, detection, index) {
     userConfirmed: false,
     matchFailed: false,
     dismissed: false,
+    // The player said this is not the game: it stays on screen, greyed and
+    // last, but stops counting as a match anywhere.
+    markedWrong: false,
     correctionSelectedGame: null,
     feedbackControls: {
       confirmButton,
@@ -2083,8 +1945,10 @@ function createMatchCard(cropCanvas, detection, index) {
       this.userConfirmed = false;
       this.matchFailed = false;
       // A fresh match result replaces whatever the user rejected before.
+      this.markedWrong = false;
       rejectedDetections.delete(this.detection);
-      card.classList.remove("feedbackConfirmed", "feedbackDenied");
+      card.classList.remove("feedbackConfirmed", "feedbackDenied", "markedWrong");
+      reportWrongButton.hidden = false;
 
       if (!best) {
         name.textContent = "No match";
@@ -2111,10 +1975,7 @@ function createMatchCard(cropCanvas, detection, index) {
       paligemmaHint.hidden = !best.paligemma_text;
       card.dataset.score = String(matchSortScore(best));
       findGameButton.disabled = false;
-      renderGameDetails(details, matches, {
-        force: this.isConfident,
-        detailsRecord: this.details,
-      });
+      renderGameDetails(details, matches, this.details);
       this.applyFilters();
       updateFeedbackActions(this);
       refreshSelectedMatchCard(this);
@@ -2141,14 +2002,37 @@ function createMatchCard(cropCanvas, detection, index) {
       matchDiagnostic.textContent = "Match source: contributor correction";
       score.textContent = "Saved as correct";
       card.dataset.score = "1";
-      renderGameDetails(details, this.matches, {
-        force: true,
-        detailsRecord: this.details,
-      });
+      renderGameDetails(details, this.matches, this.details);
       this.applyFilters();
       refreshSelectedMatchCard(this);
     },
-    async resolveDetails({ force = false } = {}) {
+    markWrong() {
+      if (this.markedWrong || !this.matches.length) {
+        return;
+      }
+
+      this.markedWrong = true;
+      // One-way, so the offer to say it again is withdrawn rather than left
+      // sitting there on a card that already carries the answer.
+      reportWrongButton.hidden = true;
+      // Greys this box on the photo too -- the same treatment a denied match
+      // has always had.
+      rejectedDetections.add(this.detection);
+      this.applyFilters();
+      refreshResultCards();
+      refreshSelectedMatchCard(this);
+    },
+    // Contributor mode can be switched on and off with cards already on screen,
+    // and it moves the bar for showing details -- so they get re-rendered.
+    renderDetails() {
+      if (!this.matches.length) {
+        return;
+      }
+
+      renderGameDetails(details, this.matches, this.details);
+      this.applyFilters();
+    },
+    async resolveDetails() {
       const best = this.matches[0];
 
       if (!best || this.dismissed) {
@@ -2170,10 +2054,7 @@ function createMatchCard(cropCanvas, detection, index) {
       }
 
       this.details = detailsRecord;
-      renderGameDetails(details, this.matches, {
-        force: force || this.isConfident,
-        detailsRecord: this.details,
-      });
+      renderGameDetails(details, this.matches, this.details);
       this.applyFilters();
       refreshSelectedMatchCard(this);
       return true;
@@ -2188,13 +2069,10 @@ function createMatchCard(cropCanvas, detection, index) {
       this.userConfirmed = true;
       this.isConfident = true;
       this.details = gameDetailsById.get(Number(best.id)) || null;
-      renderGameDetails(details, this.matches, {
-        force: true,
-        detailsRecord: this.details,
-      });
+      renderGameDetails(details, this.matches, this.details);
       this.applyFilters();
       refreshSelectedMatchCard(this);
-      await this.resolveDetails({ force: true });
+      await this.resolveDetails();
     },
     setError(text, options = {}) {
       this.matches = [];
@@ -2224,18 +2102,23 @@ function createMatchCard(cropCanvas, detection, index) {
       this.fitsFilters = result.fits;
       this.filterClassName = result.className;
 
-      // Nothing to expand into unless the match is confident enough for
-      // renderGameDetails to have produced any details.
-      card.dataset.confident = this.isConfident ? "yes" : "no";
+      // Nothing to expand into unless renderGameDetails actually produced any
+      // details for this card.
+      card.dataset.details = this.matches.length ? "yes" : "no";
 
       const checks = this.checks || {};
       card.dataset.checkPlayers = checks.players || "off";
       card.dataset.checkTime = checks.time || "off";
       card.dataset.checkWeight = checks.weight || "off";
       card.dataset.fit = result.rank;
+      // Drives the "Best at 4" badge on the tile.
+      card.dataset.playerTier = result.playerTier || "off";
+      // Read by sortCards, which pushes these past even the pending cards.
+      card.dataset.wrong = this.markedWrong ? "yes" : "no";
       card.classList.toggle("recommended", result.className === "yes");
       card.classList.toggle("conditional", result.className === "conditional");
       card.classList.toggle("rejected", result.rank === "0");
+      card.classList.toggle("markedWrong", this.markedWrong);
       fit.className = `filterFit ${result.className}`;
       fit.textContent = result.text;
       fit.title = result.title || result.text;
@@ -2289,11 +2172,22 @@ function createMatchCard(cropCanvas, detection, index) {
   });
   reportWrongButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    // Collapse first so the card is not removed out from under an open panel.
+    // Collapse first: the card is about to move to the end of the strip, and
+    // watching an open panel slide away is disorienting.
     if (cardApi.card.classList.contains("isExpanded")) {
       toggleCardExpanded(cardApi, cardApi.card.querySelector(".cardExpandButton"));
     }
-    submitRecognitionFeedback(cardApi, "deny");
+
+    // Player-only: CSS keeps this link out of the contributor view, where X
+    // denies and then asks for the right game. Kept as a fallback so the link
+    // cannot silently change meaning if that rule ever moves.
+    if (contributorMode) {
+      submitRecognitionFeedback(cardApi, "deny");
+      return;
+    }
+
+    cardApi.markWrong();
+    reportWrongMatch(cardApi);
   });
   enableCropHoverPreview(cropCanvas);
   cropCanvas.addEventListener("click", () => {
@@ -2314,7 +2208,7 @@ function createMatchCard(cropCanvas, detection, index) {
     updateCorrectionSuggestions(cardApi);
   });
   correctionInput.addEventListener("keydown", (event) => handleCorrectionInputKeyDown(event, cardApi));
-  correctionCancelButton.addEventListener("click", () => hideCorrectionPrompt(cardApi));
+  correctionCancelButton.addEventListener("click", () => skipCorrection(cardApi));
   correctionCoverConfirmButton.addEventListener("click", () => saveConfirmedCorrectedReference(cardApi));
   correctionCoverBackButton.addEventListener("click", () => resetCorrectionCoverConfirmation(cardApi, { focus: true }));
   updateFeedbackActions(cardApi);
@@ -3727,7 +3621,6 @@ async function loginContributor(event) {
       : "Contributor mode enabled.";
     setContributorMode(true);
     selectContributorTab(contributorRole === "admin" ? "latest" : "mode");
-    setStatus("Contributor mode on. Use OK or X on each match.");
   } catch (error) {
     console.error(error);
     contributorStatus.textContent = error.message || "Contributor login failed.";
@@ -3793,7 +3686,6 @@ function logoutContributor() {
   clearContributorReview();
   selectContributorTab("mode", { load: false });
   contributorStatus.textContent = "Contributor mode disabled.";
-  setStatus("Contributor mode off.");
 }
 
 function setContributorMode(enabled) {
@@ -3814,6 +3706,7 @@ function setContributorMode(enabled) {
   }
 
   for (const card of currentResultCards) {
+    card.renderDetails();
     updateFeedbackActions(card);
   }
 }
@@ -4791,7 +4684,6 @@ async function submitContributorReferenceReview(reference, action, controls) {
 
     reference.feedback = result.feedback || reference.feedback || {};
     feedback.textContent = formatReferenceFeedback(reference.feedback);
-    setStatus(`${reference.name} review saved.`);
     dismissContributorReviewCard(card);
   } catch (error) {
     console.error(error);
@@ -4843,7 +4735,6 @@ async function undoContributorReferenceReview(reference, controls) {
     denyButton.disabled = false;
     undoButton.hidden = true;
     status.textContent = "Review undone";
-    setStatus(`${reference.name} review undone.`);
   } catch (error) {
     console.error(error);
     status.textContent = error.message || "Could not undo review.";
@@ -4943,18 +4834,19 @@ function updateFeedbackActions(card) {
   const waiting = !best;
   const disabled = waiting || card.feedbackSent;
 
-  confirmButton.textContent = contributorMode ? "OK" : "Yes";
-  denyButton.textContent = contributorMode ? "X" : "No";
-  confirmButton.setAttribute("aria-label", contributorMode ? "Confirm recognition" : "Yes, this match is right");
-  denyButton.setAttribute("aria-label", contributorMode ? "Deny recognition" : "No, this match is wrong");
-  // Mock fixtures are correct by construction, so there is nothing to ask about.
-  const answered = card.feedbackSent || mockMatchesEnabled();
+  // Grading the match is contributor work. A player came to find a game, not to
+  // label the dataset, so they are never asked -- a match that is wrong is
+  // reported with the tile's own "Wrong game?" instead.
+  const asksForFeedback = contributorMode;
+  const asked = asksForFeedback && !card.feedbackSent;
 
-  confirmButton.hidden = answered;
-  denyButton.hidden = answered;
-  // See more only appears once the Yes/No question is out of the way -- one ask
-  // at a time, and the answer comes first.
-  card.card.dataset.answered = answered ? "yes" : "no";
+  confirmButton.textContent = "Yes";
+  denyButton.textContent = "No";
+  confirmButton.setAttribute("aria-label", "Yes, this match is right");
+  denyButton.setAttribute("aria-label", "No, enter the correct game");
+
+  confirmButton.hidden = !asked;
+  denyButton.hidden = !asked;
   confirmButton.disabled = disabled;
   denyButton.disabled = disabled;
 
@@ -4962,15 +4854,94 @@ function updateFeedbackActions(card) {
     return;
   }
 
-  if (card.matchFailed) {
+  if (!asksForFeedback) {
+    feedbackStatus.textContent = "";
+  } else if (card.matchFailed) {
     feedbackStatus.textContent = "No match available";
   } else if (waiting) {
     feedbackStatus.textContent = "Matching...";
-  } else if (contributorMode) {
-    feedbackStatus.textContent = "Correct?";
   } else {
-    feedbackStatus.textContent = card.isConfident ? "Right?" : "Maybe?";
+    feedbackStatus.textContent = "Correct?";
   }
+}
+
+// Fire and forget: the card is already set aside on screen, and a matcher that
+// is down should not turn that into an error the player has to think about.
+function reportWrongMatch(card) {
+  const best = card.matches[0];
+
+  if (!best || card.feedbackSent) {
+    return;
+  }
+
+  card.feedbackSent = true;
+  sendRecognitionFeedback(card, "deny", best, {
+    confident: card.isConfident,
+    contributor: false,
+    feedbackEventId: createDetectorAnnotationId(),
+  }).catch((error) => {
+    console.warn("Could not report the wrong match:", error);
+  });
+}
+
+// The contributor's Yes: both buttons go at once, the card takes its confirmed
+// state, and the POST follows behind.
+function confirmContributorMatch(card, best) {
+  const { feedbackStatus } = card.feedbackControls;
+
+  card.feedbackSent = true;
+  updateFeedbackActions(card);
+  card.card.classList.add("feedbackConfirmed");
+  card.card.classList.remove("feedbackDenied");
+  card.confirmMatch().then(refreshResultCards);
+  feedbackStatus.textContent = acceptedFeedbackText(card);
+  sendRecognitionFeedback(card, "confirm", best, {
+    confident: card.isConfident,
+    contributor: true,
+    feedbackEventId: createDetectorAnnotationId(),
+  }).catch((error) => {
+    console.error(error);
+    feedbackStatus.textContent = "Confirmed here, but not recorded";
+  });
+}
+
+// The contributor's No: the card opens onto the correction form immediately,
+// and the denial is posted behind it. A matcher that is slow or down must not
+// stand between "that is wrong" and typing what is right.
+function denyContributorMatch(card, best) {
+  const { feedbackStatus } = card.feedbackControls;
+  const feedbackEventId = createDetectorAnnotationId();
+
+  card.denialFeedbackEventId = feedbackEventId;
+  card.deniedMatch = { ...best };
+
+  if (card.detection) {
+    rejectedDetections.add(card.detection);
+  }
+
+  redrawActiveDetections();
+  card.feedbackSent = true;
+  updateFeedbackActions(card);
+  card.card.classList.add("feedbackDenied");
+  card.card.classList.remove("feedbackConfirmed");
+  feedbackStatus.textContent = "Denied";
+
+  // Expanded first: the correction prompt needs room for a field and its
+  // suggestions, which a tile does not have.
+  if (!card.card.classList.contains("isExpanded")) {
+    toggleCardExpanded(card, card.card.querySelector(".cardExpandButton"));
+  }
+
+  showCorrectionPrompt(card);
+  sendRecognitionFeedback(card, "deny", best, {
+    confident: card.isConfident,
+    contributor: true,
+    feedbackEventId,
+  }).catch((error) => {
+    console.error(error);
+    card.feedbackControls.correctionStatus.textContent =
+      "Denial not recorded, but the correction below will still save.";
+  });
 }
 
 async function submitRecognitionFeedback(card, action) {
@@ -4984,6 +4955,19 @@ async function submitRecognitionFeedback(card, action) {
 
   if (!best) {
     feedbackStatus.textContent = "No match yet";
+    return;
+  }
+
+  // Both contributor answers land on the card immediately rather than after a
+  // round trip -- the verdict is already decided by the tap, and the POST that
+  // records it has nothing to add to the screen. It follows in the background.
+  if (contributorMode) {
+    if (action === "deny") {
+      denyContributorMatch(card, best);
+    } else {
+      confirmContributorMatch(card, best);
+    }
+
     return;
   }
 
@@ -5001,13 +4985,11 @@ async function submitRecognitionFeedback(card, action) {
       }
       redrawActiveDetections();
     }
-    if (!mockMatchesEnabled()) {
-      await sendRecognitionFeedback(card, action, best, {
-        confident: card.isConfident,
-        contributor: contributorMode,
-        feedbackEventId,
-      });
-    }
+    await sendRecognitionFeedback(card, action, best, {
+      confident: card.isConfident,
+      contributor: contributorMode,
+      feedbackEventId,
+    });
     card.feedbackSent = true;
     updateFeedbackActions(card);
     card.card.classList.toggle("feedbackConfirmed", action === "confirm");
@@ -5017,15 +4999,10 @@ async function submitRecognitionFeedback(card, action) {
       await card.confirmMatch();
       refreshResultCards();
       feedbackStatus.textContent = acceptedFeedbackText(card);
-      setStatus(`${best.name} confirmed.`);
-    } else if (contributorMode) {
-      feedbackStatus.textContent = "Denied";
-      setStatus(`${best.name} denied. Add the correct game.`);
-      showCorrectionPrompt(card);
     } else {
+      // Same outcome as the tile's "Wrong game?": set aside, not thrown away.
       feedbackStatus.textContent = "Thanks";
-      setStatus(`${best.name} marked as wrong.`);
-      dismissMatchCard(card, 1);
+      card.markWrong();
     }
   } catch (error) {
     console.error(error);
@@ -5151,56 +5128,46 @@ async function showCorrectionCoverConfirmation(card, game) {
   correctionStatus.textContent = "Confirm the cover before submitting.";
 }
 
-async function saveConfirmedCorrectedReference(card) {
-  const {
-    correctionCoverConfirmButton,
-    correctionCoverBackButton,
-    correctionActions,
-    correctionStatus,
-    feedbackStatus,
-  } = card.feedbackControls;
+// "Yes, same game" is the end of the correction: the form has served its
+// purpose and closes on the tap, leaving the card showing the game that was
+// just named. The save runs behind it.
+function saveConfirmedCorrectedReference(card) {
+  const { feedbackStatus } = card.feedbackControls;
   const game = card.correctionSelectedGame;
+  const originalMatch = card.deniedMatch || card.matches[0] || null;
+
   if (!game) {
     return;
   }
-  correctionCoverConfirmButton.disabled = true;
-  correctionCoverBackButton.disabled = true;
-  correctionStatus.textContent = "Saving correct reference...";
-  try {
-    await sendRecognitionFeedback(
-      card,
-      "confirm",
-      {
-        id: game.id,
-        name: game.name,
-        score: 1,
-        rank_score: 1,
-        source: "contributor_correction",
-      },
-      {
-        confident: true,
-        contributor: true,
-        feedbackEventId: createDetectorAnnotationId(),
-        correctionOfEventId: card.denialFeedbackEventId || "",
-        originalMatch: card.deniedMatch || card.matches[0] || null,
-      }
-    );
 
-    card.feedbackSent = true;
-    card.card.classList.add("feedbackConfirmed");
-    card.card.classList.remove("feedbackDenied");
-    card.setCorrectedGame(game);
-    await card.resolveDetails({ force: true });
-    refreshResultCards();
-    hideCorrectionPrompt(card, { clear: false });
-    feedbackStatus.textContent = "Corrected";
-    setStatus(`${game.name} saved as the correct reference.`);
-  } catch (error) {
+  hideCorrectionPrompt(card);
+  card.feedbackSent = true;
+  card.card.classList.add("feedbackConfirmed");
+  card.card.classList.remove("feedbackDenied");
+  card.setCorrectedGame(game);
+  card.resolveDetails().then(refreshResultCards);
+  feedbackStatus.textContent = "Corrected";
+  sendRecognitionFeedback(
+    card,
+    "confirm",
+    {
+      id: game.id,
+      name: game.name,
+      score: 1,
+      rank_score: 1,
+      source: "contributor_correction",
+    },
+    {
+      confident: true,
+      contributor: true,
+      feedbackEventId: createDetectorAnnotationId(),
+      correctionOfEventId: card.denialFeedbackEventId || "",
+      originalMatch,
+    }
+  ).catch((error) => {
     console.error(error);
-    correctionStatus.textContent = error.message || "Could not save correct game.";
-    correctionCoverConfirmButton.disabled = false;
-    correctionCoverBackButton.disabled = false;
-  }
+    feedbackStatus.textContent = "Corrected here, but not saved";
+  });
 }
 
 function resetCorrectionCoverConfirmation(card, { focus = false } = {}) {
@@ -5322,6 +5289,23 @@ async function showCorrectionPrompt(card) {
   window.setTimeout(() => correctionInput.focus(), 0);
 }
 
+// Skipping leaves a box that was denied and never corrected. It gets the same
+// treatment a player's "Wrong game?" gives: greyed, sorted to the end, and out
+// of the counts -- rather than sitting among the answers still showing the name
+// the contributor just rejected.
+function skipCorrection(card) {
+  const { feedbackStatus } = card.feedbackControls;
+
+  hideCorrectionPrompt(card);
+
+  if (card.card.classList.contains("isExpanded")) {
+    toggleCardExpanded(card, card.card.querySelector(".cardExpandButton"));
+  }
+
+  card.markWrong();
+  feedbackStatus.textContent = "Skipped";
+}
+
 function hideCorrectionPrompt(card, { clear = true } = {}) {
   const {
     correctionPanel,
@@ -5373,6 +5357,24 @@ function closeFilterPanel() {
   setFilterPanelOpen(false);
 }
 
+// The poll is not in the shipped catalog yet -- BGG's XML API needs a token to
+// backfill it. Offering "Best at this count only" against data that does not
+// exist would just empty the strip, so the control stays hidden until at least
+// one game on screen actually carries votes. It appears on its own once a
+// backfill lands; nothing else has to change.
+function refreshBestPlayerCountAvailability() {
+  const available = currentResultCards.some((card) => (
+    card.details?.best_player_counts?.length
+    || card.details?.recommended_player_counts?.length
+  ));
+
+  if (!available && bestPlayerCountFilter.checked) {
+    bestPlayerCountFilter.checked = false;
+  }
+
+  bestPlayerCountField.hidden = !available;
+}
+
 function handleFilterChange() {
   for (const card of currentResultCards) {
     card.applyFilters();
@@ -5391,6 +5393,9 @@ function refreshResultCards() {
 
 function getFilters() {
   const players = cleanNumber(playersFilter.value);
+  // Only meaningful alongside a player count -- on its own there is no count
+  // to be best at.
+  const bestPlayerCountOnly = Boolean(players) && bestPlayerCountFilter.checked;
   const maxTime = cleanNumber(timeFilter.value);
   const maxWeight = cleanNumber(complexityFilter.value) || 5;
   const complexityLabel = complexityFilter.selectedOptions[0]?.textContent || "Any";
@@ -5399,10 +5404,13 @@ function getFilters() {
   const gameType = gameTypeFilter.value;
   const expansionMode = expansionFilter.value;
   const minYear = cleanNumber(minYearFilter.value);
-  const hasAdvanced = Boolean(minRating || maxRank || gameType || expansionMode || minYear);
+  const hasAdvanced = Boolean(
+    minRating || maxRank || gameType || expansionMode || minYear || bestPlayerCountOnly,
+  );
 
   return {
     players,
+    bestPlayerCountOnly,
     maxTime,
     maxWeight,
     complexityLabel,
@@ -5416,6 +5424,9 @@ function getFilters() {
   };
 }
 
+// Every recognised box is run through the filters, whatever the matcher thought
+// of its own guess. A shaky match is not a reason to withhold the answer -- it
+// is a reason to rank it below the sure ones, which the score sort already does.
 function evaluateCardAgainstFilters(card) {
   const filters = getFilters();
 
@@ -5428,12 +5439,14 @@ function evaluateCardAgainstFilters(card) {
     };
   }
 
-  if (!card.isConfident) {
+  // Sorted below everything else and no longer counted: the player has said
+  // this is not the game, so it stops competing with the real answers.
+  if (card.markedWrong) {
     return {
       fits: false,
-      rank: "1",
-      className: "unknown",
-      text: "Uncertain match",
+      rank: "-2",
+      className: "no",
+      text: "Marked wrong",
     };
   }
 
@@ -5448,6 +5461,7 @@ function evaluateCardAgainstFilters(card) {
 
   const result = gameFitsFilters(card.details, filters);
   card.checks = result.checks;
+  card.playerTier = result.playerTier;
 
   if (result.fits) {
     if (result.conditionalFits?.length) {
@@ -5458,16 +5472,25 @@ function evaluateCardAgainstFilters(card) {
         fits: true,
         rank: "2",
         className: "conditional",
+        playerTier: result.playerTier,
         text: `+ ${expansionName}`,
         title: `Matches the filters if ${expansion.name} is included.`,
       };
     }
 
+    // Best and Recommended rank above a game that merely seats the group, and a
+    // count the voters rate poorly ranks below it -- but all of them still fit.
+    // A game with no votes sits at "supported", so nothing is demoted for
+    // lacking data.
+    const rank = PLAYER_TIER_RANK[result.playerTier] || PLAYER_TIER_RANK.supported;
+
     return {
       fits: true,
-      rank: "3",
+      rank,
       className: "yes",
-      text: filters.hasAny ? "Fits" : "Confident",
+      playerTier: result.playerTier,
+      text: playerTierText(result.playerTier, filters),
+      title: playerTierTitle(result.playerTier, filters),
     };
   }
 
@@ -5480,16 +5503,68 @@ function evaluateCardAgainstFilters(card) {
   };
 }
 
+// Fit ranks, highest first. sortCards reads these off data-fit, so the gaps
+// matter more than the numbers: 2 conditional (needs an expansion to seat the
+// group at all), 1 no game data, 0 fails a filter, -1 pending, -2 marked wrong.
+// A poorly-voted count still outranks needing to buy something.
+const PLAYER_TIER_RANK = {
+  best: "6",
+  recommended: "5",
+  supported: "4",
+  not_recommended: "3",
+};
+
+// The badge on a card that fits. Says which grade of fit it is when BGG's
+// voters have an opinion, and falls back to the old wording when they do not.
+function playerTierText(tier, filters) {
+  if (tier === "best") {
+    return `Best at ${filters.players}`;
+  }
+
+  if (tier === "recommended") {
+    return `Good at ${filters.players}`;
+  }
+
+  if (tier === "not_recommended") {
+    return `Poor at ${filters.players}`;
+  }
+
+  return filters.hasAny ? "Fits" : "Recognised";
+}
+
+function playerTierTitle(tier, filters) {
+  if (tier === "best") {
+    return `BGG voters rate this game best with ${filters.players} players.`;
+  }
+
+  if (tier === "recommended") {
+    return `BGG voters recommend this game with ${filters.players} players, though it is not their favourite count.`;
+  }
+
+  if (tier === "not_recommended") {
+    return `It plays at ${filters.players}, but BGG voters do not recommend that count.`;
+  }
+
+  return "";
+}
+
 function gameFitsFilters(details, filters) {
   const reasons = [];
   const conditionalFits = [];
   // Per-dimension verdicts for the basic filters: "pass", "fail", "maybe"
   // (fits only with an expansion), or "off" when that filter is not set.
   const checks = { players: "off", time: "off", weight: "off" };
+  // "off" until a player filter is set; otherwise best | recommended |
+  // supported | not_recommended | unsupported | unknown.
+  let playerTier = "off";
 
   if (filters.players) {
-    const playerResult = checkPlayerCount(details, filters.players);
+    const playerResult = checkPlayerCount(details, filters.players, {
+      bestOnly: filters.bestPlayerCountOnly,
+    });
     checks.players = playerResult.fits ? "pass" : "fail";
+    // Carried out so the fit ranking can put "best at 4" above "plays 4".
+    playerTier = playerResult.tier;
 
     if (!playerResult.fits) {
       const expansionResult = checkPlayerExpansionCount(details, filters.players);
@@ -5566,23 +5641,77 @@ function gameFitsFilters(details, filters) {
     conditionalFits: reasons.length === 0 ? conditionalFits : [],
     reasons,
     checks,
+    playerTier,
   };
 }
 
-function checkPlayerCount(details, players) {
+// BGG's poll records a verdict per player count, as strings: "1", "2" ... up to
+// the game's maximum, then a final "4+" row. That last row means MORE than four,
+// not four-or-more -- four has its own row right before it. Reading it as
+// "or more" made a game whose top count is unvoted inherit the "4+" verdict.
+function pollCountMatches(pollCounts, players) {
+  return (pollCounts || []).some((entry) => {
+    const raw = String(entry).trim();
+
+    if (raw.endsWith("+")) {
+      const floor = cleanNumber(raw.slice(0, -1));
+      return Boolean(floor) && players > floor;
+    }
+
+    return cleanNumber(raw) === players;
+  });
+}
+
+// What BGG's voters think of this game AT this count, which is a different
+// question from whether the box allows it. "supported" is both the honest
+// answer for a game with no poll and the tier that reproduces the old
+// behaviour, so a game without votes ranks exactly where it always did.
+function playerCountTier(details, players) {
+  if (pollCountMatches(details.best_player_counts, players)) {
+    return "best";
+  }
+
+  if (pollCountMatches(details.recommended_player_counts, players)) {
+    return "recommended";
+  }
+
+  if (pollCountMatches(details.not_recommended_player_counts, players)) {
+    return "not_recommended";
+  }
+
+  return "supported";
+}
+
+function checkPlayerCount(details, players, { bestOnly = false } = {}) {
   const minPlayers = cleanNumber(details.min_players);
   const maxPlayers = cleanNumber(details.max_players);
 
   if (!minPlayers && !maxPlayers) {
-    return { fits: false, reason: "No player data" };
+    return { fits: false, tier: "unknown", reason: "No player data" };
   }
 
-  const fits = players >= (minPlayers || maxPlayers) && players <= (maxPlayers || minPlayers);
+  const inRange = players >= (minPlayers || maxPlayers) && players <= (maxPlayers || minPlayers);
 
-  return {
-    fits,
-    reason: fits ? "" : `Not ${players} players`,
-  };
+  if (!inRange) {
+    return { fits: false, tier: "unsupported", reason: `Not ${players} players` };
+  }
+
+  const tier = playerCountTier(details, players);
+
+  // Voted down at this count still fits: the group can play it tonight, and the
+  // ranking is what says they probably should not. Only the explicit best-only
+  // filter turns a tier into a fail.
+  if (bestOnly && tier !== "best") {
+    return {
+      fits: false,
+      tier,
+      reason: tier === "recommended"
+        ? `Only recommended at ${players}`
+        : `Not voted best at ${players}`,
+    };
+  }
+
+  return { fits: true, tier, reason: "" };
 }
 
 function checkPlayerExpansionCount(details, players) {
@@ -5712,15 +5841,15 @@ function checkMinYear(details, minYear) {
   };
 }
 
-function renderGameDetails(container, matches, { force = false, detailsRecord = null } = {}) {
+// Players, time and weight: the three the filters act on, and the three the
+// compact tile has room for. Kept in sync with the CSS that hides the rest.
+const TRIAGE_DETAIL_FIELDS = new Set(["players", "time", "weight"]);
+
+// Every card shows what was found, contributor or player alike. Withholding the
+// details behind a confidence bar left cards that said nothing at all, and the
+// score line and box colour already carry how sure the matcher is.
+function renderGameDetails(container, matches, detailsRecord = null) {
   container.replaceChildren();
-
-  if (!force && !isConfidentMatch(matches)) {
-    container.textContent = "Game details hidden until the match is stronger.";
-    container.classList.add("muted");
-    return;
-  }
-
   container.classList.remove("muted");
 
   const best = matches[0];
@@ -5732,23 +5861,31 @@ function renderGameDetails(container, matches, { force = false, detailsRecord = 
     return;
   }
 
+  // The tile shows the three the filters act on, picked out by field rather
+  // than by position: plenty of BGG entries carry no player count, time or
+  // weight at all, and dropping those rows used to slide Rank and Type up into
+  // the tile's three slots -- so a game with no player count showed its rank
+  // under the heading the eye reads as players.
   const rows = [
-    ["Players", formatPlayers(details)],
-    ["Time", formatDuration(details)],
-    ["Weight", formatWeight(details.average_weight)],
-    ["Rank", formatRank(details.rank)],
-    ["Rating", formatRating(details.average_rating)],
-    ["Type", formatGameTypeTags(details.game_type_tags)],
-    ["Year", formatYear(details.year_published)],
-  ].filter(([, value]) => value);
+    ["players", "Players", formatPlayers(details)],
+    ["time", "Time", formatDuration(details)],
+    ["weight", "Weight", formatWeight(details.average_weight)],
+    ["rank", "Rank", formatRank(details.rank)],
+    ["rating", "Rating", formatRating(details.average_rating)],
+    ["type", "Type", formatGameTypeTags(details.game_type_tags)],
+    ["year", "Year", formatYear(details.year_published)],
+  ].filter(([field, , value]) => value || TRIAGE_DETAIL_FIELDS.has(field));
 
-  for (const [label, value] of rows) {
+  for (const [field, label, value] of rows) {
     const row = document.createElement("div");
     const labelNode = document.createElement("span");
     const valueNode = document.createElement("strong");
 
+    row.dataset.field = field;
     labelNode.textContent = label;
-    valueNode.textContent = value;
+    // An empty slot says so rather than letting the next field take its place.
+    valueNode.textContent = value || "Not known";
+    valueNode.classList.toggle("isMissing", !value);
     row.append(labelNode, valueNode);
     container.append(row);
   }
@@ -6540,25 +6677,39 @@ function sortCards() {
 
   const cards = Array.from(resultsGrid.children);
   cards.sort((left, right) => {
+    // Anything the player called wrong goes to the end, past even the cards
+    // still waiting on the matcher.
+    const wrongDifference = Number(left.dataset.wrong === "yes")
+      - Number(right.dataset.wrong === "yes");
+
+    if (wrongDifference !== 0) {
+      return wrongDifference;
+    }
+
     const fitDifference = Number(right.dataset.fit || 0) - Number(left.dataset.fit || 0);
 
     if (fitDifference !== 0) {
       return fitDifference;
     }
 
+    // Within one fit rank, the matcher's confidence decides the order.
     return Number(right.dataset.score) - Number(left.dataset.score);
   });
   resultsGrid.replaceChildren(...cards);
 }
 
 function updateResultStats() {
+  refreshBestPlayerCountAvailability();
+
   if (!currentResultCards.length) {
     return;
   }
 
   const filters = getFilters();
   const matched = currentResultCards.filter((card) => card.fitsFilters).length;
-  const checked = currentResultCards.filter((card) => card.matches.length || card.matchFailed).length;
+  const checked = currentResultCards.filter(
+    (card) => !card.markedWrong && (card.matches.length || card.matchFailed),
+  ).length;
 
   // Reads as a statement about the scan rather than a bare ratio, so the
   // follow-up question beside it lands as part of the same thought.
@@ -6586,7 +6737,9 @@ function filterOutcomeSummary() {
   }
 
   if (!getFilters().hasAny) {
-    const identified = currentResultCards.filter((card) => card.isConfident).length;
+    const identified = currentResultCards.filter(
+      (card) => !card.markedWrong && card.matches.length,
+    ).length;
     return identified
       ? `Recognised ${identified} of ${total}.`
       : `Found ${total} box${total === 1 ? "" : "es"}, none recognised.`;
@@ -6764,10 +6917,6 @@ function setBackendWarning(offline) {
   }
 }
 
-function setStatus(text) {
-  statusText.textContent = text;
-}
-
 function freezeCurrentCameraFrame() {
   photoPreview.width = video.videoWidth;
   photoPreview.height = video.videoHeight;
@@ -6838,12 +6987,6 @@ async function drawImageElementToCanvas(file, canvas) {
     drawImageSourceToCanvas(image, canvas);
   } finally {
     URL.revokeObjectURL(url);
-  }
-}
-
-function rememberMockSource(canvas, src) {
-  if (canvas) {
-    canvas.mockSourceLabel = src || "";
   }
 }
 

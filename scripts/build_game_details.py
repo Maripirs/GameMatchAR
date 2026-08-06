@@ -32,14 +32,21 @@ CSV_SUBDOMAIN_RANK_FIELDS = {
     "thematic_rank": "thematic",
     "wargames_rank": "war",
 }
+# Everything here exists to drive a filter. Left out because nothing filters on
+# them and together they were 45% of the payload: boardgamefamily (26 entries
+# per game, mostly "Components: Wooden pieces"), boardgamepublisher (28 per
+# game), boardgameartist, and the description. Also skipped: accessories,
+# expansion link lists, and the videos / comments / marketplace / versions
+# sub-APIs.
 BGG_LINK_TYPES = {
     "boardgamecategory": "categories",
     "boardgamemechanic": "mechanics",
-    "boardgamefamily": "families",
     "boardgamedesigner": "designers",
-    "boardgameartist": "artists",
-    "boardgamepublisher": "publishers",
 }
+# Everything here exists to drive a filter. Deliberately not fetched: the
+# description (1-3 KB each, ~10 MB across the catalog, and not something you
+# filter on), accessories, expansion link lists, implementations, and the
+# videos / comments / marketplace / versions sub-APIs.
 
 
 def main():
@@ -48,6 +55,13 @@ def main():
     visual_index_path = resolve_path(project_root, args.visual_index)
     csv_path = resolve_optional_path(project_root, args.csv)
     output_path = resolve_path(project_root, args.output)
+    # Skipped for the obscure catalog, whose vocabulary is the same one the core
+    # build already emits.
+    vocabulary_path = (
+        resolve_path(project_root, args.vocabulary_output)
+        if args.vocabulary_output
+        else None
+    )
     exclude_details_path = resolve_optional_path(project_root, args.exclude_details) if args.exclude_details else None
 
     seeds = collect_game_seeds(
@@ -80,6 +94,8 @@ def main():
         print(f"Output: {output_path}")
         write_details(output_path, sort_details(details_by_id), pretty=args.pretty)
         print(f"Done. Wrote {len(details_by_id)} games.")
+        if vocabulary_path:
+            write_vocabulary(vocabulary_path, details_by_id, pretty=args.pretty)
         return
 
     if args.refresh:
@@ -152,6 +168,8 @@ def main():
             time.sleep(args.delay)
 
     print(f"Done. Wrote {len(details_by_id)} games.")
+    if vocabulary_path:
+        write_vocabulary(vocabulary_path, details_by_id, pretty=args.pretty)
 
 
 def parse_args():
@@ -190,6 +208,15 @@ def parse_args():
         type=Path,
         default=Path("data/game_details.json"),
         help="Output JSON path.",
+    )
+    parser.add_argument(
+        "--vocabulary-output",
+        type=Path,
+        default=Path("data/filter_vocabulary.json"),
+        help=(
+            "Where to write the distinct categories and mechanics with per-value "
+            "game counts, for building filter menus. Pass an empty string to skip."
+        ),
     )
     parser.add_argument(
         "--exclude-details",
@@ -408,7 +435,6 @@ def details_from_item(item, seed):
         {
             "id": game_id,
             "name": primary_name,
-            "alternate_names": find_alternate_names(item, primary_name),
             "year_published": year or seed.get("year_published"),
             "min_players": min_players,
             "max_players": max_players,
@@ -418,16 +444,15 @@ def details_from_item(item, seed):
             "max_playtime": max_playtime,
             "duration": format_duration(min_playtime, max_playtime, playing_time),
             "min_age": min_age,
+            "suggested_player_age": find_suggested_player_age(item),
             "average_weight": average_weight,
+            "weight_votes": rating_value_int(item, "numweights"),
             "rank": rank,
             "subdomain_ranks": seed.get("subdomain_ranks"),
             "game_type_tags": seed.get("game_type_tags"),
             "categories": links.get("categories"),
             "mechanics": links.get("mechanics"),
-            "families": links.get("families"),
             "designers": links.get("designers"),
-            "artists": links.get("artists"),
-            "publishers": links.get("publishers"),
             "best_player_counts": player_poll.get("best"),
             "recommended_player_counts": player_poll.get("recommended"),
             "not_recommended_player_counts": player_poll.get("not_recommended"),
@@ -436,7 +461,9 @@ def details_from_item(item, seed):
             "thumbnail_url": element_text(item, "thumbnail"),
             "image_url": element_text(item, "image"),
             "users_rated": users_rated,
+            "owned": rating_value_int(item, "owned"),
             "average_rating": average_rating,
+            "rating_stddev": rating_value_float(item, "stddev"),
             "bayes_average": bayes_average,
             "is_expansion": seed.get("is_expansion"),
             "metadata_sources": ["boardgames_ranks", "bgg_xml"],
@@ -608,6 +635,30 @@ def find_suggested_player_counts(item):
             results["not_recommended"].append(player_count)
 
     return results
+
+
+def find_suggested_player_age(item):
+    """The age players actually vote for, which the box age often overstates.
+
+    Values are "2", "3" ... "21 and up"; the winning bucket is the community's
+    answer. Kept as a number so an age filter can compare against it.
+    """
+    poll = find_poll(item, "suggested_playerage")
+
+    if poll is None:
+        return None
+
+    result_nodes = poll.findall("./results/result")
+
+    if not result_nodes:
+        return None
+
+    best = max(result_nodes, key=lambda result: parse_int(result.get("numvotes")) or 0)
+
+    if not parse_int(best.get("numvotes")):
+        return None
+
+    return parse_int(str(best.get("value") or "").split()[0] or "")
 
 
 def find_language_dependence(item):
@@ -822,6 +873,45 @@ def write_details(path, details, pretty=False):
         encoding="utf-8",
     )
     temp_path.replace(path)
+
+
+# BGG's category and mechanic vocabularies are finite -- roughly 85 and 185
+# entries -- and stop growing, so they are worth having as their own small file.
+# The records keep the readable strings; this exists so a filter dropdown can be
+# built without scanning all 5,008 records, and so "what can I filter by?" has
+# an answer before any game data loads. Ordered by how many games use each, so
+# the useful values come first and one-off values sort to the bottom.
+VOCABULARY_FIELDS = ("categories", "mechanics")
+
+
+def build_vocabulary(details_by_id):
+    counts = {field: {} for field in VOCABULARY_FIELDS}
+
+    for details in details_by_id.values():
+        for field in VOCABULARY_FIELDS:
+            for value in details.get(field) or []:
+                counts[field][value] = counts[field].get(value, 0) + 1
+
+    return {
+        field: [
+            {"name": name, "games": total}
+            for name, total in sorted(
+                counts[field].items(), key=lambda pair: (-pair[1], pair[0])
+            )
+        ]
+        for field in VOCABULARY_FIELDS
+    }
+
+
+def write_vocabulary(path, details_by_id, pretty=False):
+    vocabulary = build_vocabulary(details_by_id)
+    vocabulary["games_counted"] = len(details_by_id)
+    vocabulary["updated_at"] = now_iso()
+    write_details(path, vocabulary, pretty=pretty)
+    summary = ", ".join(
+        f"{len(vocabulary[field])} {field}" for field in VOCABULARY_FIELDS
+    )
+    print(f"Vocabulary: {summary} -> {path}")
 
 
 def sort_details(details_by_id):

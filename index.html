@@ -198,6 +198,12 @@
           <span>Since</span>
           <input id="minYearFilter" type="number" min="1900" max="2100" inputmode="numeric" placeholder="Any" />
         </label>
+        <!-- Shown only once some game on screen carries BGG's player poll;
+             see refreshBestPlayerCountAvailability in app.js. -->
+        <label id="bestPlayerCountField" class="filterToggle" hidden>
+          <input id="bestPlayerCountFilter" type="checkbox" />
+          <span>Best at this count only</span>
+        </label>
       </div>
       <div id="filterActions">
         <button id="applyFiltersButton" type="button">Done</button>
@@ -250,7 +256,6 @@
         <span id="resultCount"></span>
         <button id="missingBoxesButton" type="button">Missing a game?</button>
       </div>
-      <p id="status"></p>
       <div id="resultsNotice" class="resultsNotice" hidden></div>
       <div id="resultsGrid"></div>
     </section>
@@ -283,17 +288,20 @@
           }
           base = localStorage.getItem("gamematchApiBase") || base;
 
-          // ?mock=1 replaces backend matching with canned results for the
-          // bundled examples, for UI work. Local-only, like the API override.
-          const mock = new URLSearchParams(window.location.search).get("mock");
-          if (mock !== null) {
-            if (mock && mock !== "0") {
-              localStorage.setItem("gamematchMockMatches", "1");
+          // ?contributor=1 forces contributor mode on without a password, so the
+          // review UI can be looked at locally. Temporary, and local-only like
+          // the others -- it grants no server access, since every contributor
+          // endpoint still checks the password header.
+          const forced = new URLSearchParams(window.location.search).get("contributor");
+          if (forced !== null) {
+            if (forced && forced !== "0") {
+              localStorage.setItem("gamematchForceContributor", "1");
             } else {
-              localStorage.removeItem("gamematchMockMatches");
+              localStorage.removeItem("gamematchForceContributor");
             }
           }
-          window.GAMEMATCH_MOCK_MATCHES = localStorage.getItem("gamematchMockMatches") === "1";
+          window.GAMEMATCH_FORCE_CONTRIBUTOR =
+            localStorage.getItem("gamematchForceContributor") === "1";
         } catch (error) {
           console.warn("Could not read the API base override:", error);
         }
