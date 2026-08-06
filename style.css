@@ -410,11 +410,6 @@ body.manualBoxMode #zoomInButton {
   text-shadow: none;
 }
 
-#topBarActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 
 /* Back keeps its slot when unavailable rather than collapsing it: without the
    reserved space the centred title shifted left on the home screen and the bar
@@ -445,10 +440,6 @@ body.imagePreview:not(.manualBoxMode) #controls {
   display: none;
 }
 
-#topBarActions {
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
-}
 
 /* The title block is the panel's content, not a card sitting on it -- its own
    border, background and shadow read as a box inside a box. Centred as a unit
@@ -462,10 +453,11 @@ body.imagePreview:not(.manualBoxMode) #controls {
 }
 
 #topBarActions {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   pointer-events: auto;
 }
 
@@ -862,11 +854,6 @@ body.contributorMode #infoButton {
 .contributorReviewCard.reviewConfirmed {
   border-color: color-mix(in srgb, var(--success) 62%, transparent);
   background: linear-gradient(145deg, color-mix(in srgb, var(--success) 16%, transparent), color-mix(in srgb, var(--purple) 10%, transparent));
-}
-
-.contributorReviewCard.reviewDenied {
-  border-color: color-mix(in srgb, var(--danger) 62%, transparent);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--danger) 14%, transparent), color-mix(in srgb, var(--purple) 8%, transparent));
 }
 
 .contributorReviewCard.isDismissing {
