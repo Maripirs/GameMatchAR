@@ -57,9 +57,11 @@ def main():
     output_path = resolve_path(project_root, args.output)
     # Skipped for the obscure catalog, whose vocabulary is the same one the core
     # build already emits.
+    # Path("") is PosixPath("."), which is truthy -- compare the raw string so
+    # --vocabulary-output "" actually skips instead of writing to the cwd.
     vocabulary_path = (
-        resolve_path(project_root, args.vocabulary_output)
-        if args.vocabulary_output
+        resolve_path(project_root, Path(args.vocabulary_output))
+        if str(args.vocabulary_output).strip()
         else None
     )
     exclude_details_path = resolve_optional_path(project_root, args.exclude_details) if args.exclude_details else None
@@ -211,8 +213,7 @@ def parse_args():
     )
     parser.add_argument(
         "--vocabulary-output",
-        type=Path,
-        default=Path("data/filter_vocabulary.json"),
+        default="data/filter_vocabulary.json",
         help=(
             "Where to write the distinct categories and mechanics with per-value "
             "game counts, for building filter menus. Pass an empty string to skip."
