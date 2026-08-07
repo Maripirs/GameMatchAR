@@ -1,3 +1,10 @@
 .cache/
 __pycache__/
 *.py[cod]
+
+# Rebuildable from BGG via scripts/build_game_details.py, and 33.7 MB of
+# single-line JSON -- git cannot delta it, so every refresh added a fresh blob
+# to history permanently. The backend serves it from /catalog/details?tier=obscure;
+# with the backend down, obscure matches lose their details and nothing else
+# breaks. The core tier stays tracked so the app still works offline.
+data/game_details_obscure.json

@@ -14,7 +14,9 @@ Current bundle:
 - YOLO board-game-box detection in the browser
 - Server-side visual matching through your GameMatch backend
 - Local game metadata from `data/game_details.json`
-- Lazy obscure metadata from `data/game_details_obscure.json`
+- Lazy obscure metadata from the backend's `/catalog/details?tier=obscure`, or
+  `data/game_details_obscure.json` if you build it locally (not in the repo --
+  see below)
 - Conditional player-count expansion support from `data/player_expansion_index.json`
 - Player count, duration, and complexity filters
 - CSV-backed rank, rating, expansion, and game-type tags for advanced filters
@@ -97,7 +99,11 @@ When you collect better user references locally, rebuild the backend user-refere
 If you refresh the game metadata for the browser filters/details, replace:
 
 - `data/game_details.json`
-- `data/game_details_obscure.json`
+- `data/game_details_obscure.json` — **untracked.** 33.7 MB of single-line JSON
+  that git cannot delta, so every refresh added a permanent blob to history.
+  Build it locally and let the backend serve it; the catalog rebuild endpoint
+  picks it up. With the backend unreachable, obscure matches simply lose their
+  details and nothing else changes.
 
 Player-count expansions that make a base game fit a larger player-count filter are tracked separately in `data/player_expansion_index.json`. Add conservative entries there when you know a specific expansion raises the supported player count; the app will label those results as fitting only with that expansion included.
 
