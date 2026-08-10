@@ -170,6 +170,76 @@ def stub_player_poll(page):
         status=200, content_type="application/json", body=body))
 
 
+# Fixed values for the fields the advanced filters and the expanded card read,
+# seeded onto the five fixtures for the same reason as the player poll above:
+# asserting against whatever BGG currently says about a real game is how a
+# check rots.
+ADVANCED_FIELDS = {
+    "Santorini: New York": {
+        "categories": ["Abstract Strategy"], "mechanics": ["Grid Movement"],
+        "suggested_player_age": 8, "language_dependence": {"level": 1},
+    },
+    "Verdant": {
+        "categories": ["Card Game"], "mechanics": ["Tile Placement"],
+        "suggested_player_age": 12, "language_dependence": {"level": 2},
+    },
+    "Clank!: A Deck-Building Adventure": {
+        "categories": ["Adventure"], "mechanics": ["Deck, Bag, and Pool Building"],
+        "suggested_player_age": 12, "language_dependence": {"level": 3},
+    },
+    "Juicy Fruits": {
+        "categories": ["Card Game"], "mechanics": ["Tile Placement"],
+        "suggested_player_age": 8, "language_dependence": {"level": 1},
+    },
+    "Bad Company": {
+        "categories": ["Science Fiction"], "mechanics": ["Dice Rolling"],
+        "suggested_player_age": 14, "language_dependence": {"level": 4},
+    },
+}
+
+
+def stub_pending_match(page, answer=2):
+    """Answer the first few crops and leave the rest hanging.
+
+    Holds the page in the mid-scan state indefinitely, so what the count line
+    says while the matcher is still working can be asserted without racing it.
+    The real window is about 80 ms.
+    """
+    cycle = itertools.cycle(FIXTURES)
+    answered = itertools.count()
+
+    def match(route):
+        if next(answered) >= answer:
+            return                      # never fulfilled: the crop stays pending
+
+        entry = next(cycle)
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+            "matches": [{**entry, "rank_score": entry["score"],
+                         "source": "bgg_cover", "reference_image_path": ""}],
+            "used_obscure": False, "paligemma_used": False,
+        }))
+
+    page.route("**/match", match)
+
+
+def stub_advanced_fields(page):
+    """Serve the catalog with known themes, mechanics, ages and language levels."""
+    details = json.loads((REPO / "data" / "game_details.json").read_text())
+
+    for record in details.values():
+        seed = ADVANCED_FIELDS.get(record.get("name"))
+
+        if seed:
+            record.update(seed)
+            # The age check falls back to the publisher's box age, which would
+            # otherwise decide the verdict for a fixture seeded above it.
+            record.pop("min_age", None)
+
+    body = json.dumps(details)
+    page.route("**/data/game_details.json", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=body))
+
+
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(REPO), **kwargs)
@@ -689,7 +759,7 @@ def run(headed):
         tp.fill("#playersFilter", "4")
         # Time and weight off, so only the player tier separates these cards.
         tp.select_option("#timeFilter", "")
-        tp.select_option("#complexityFilter", "5")
+        tp.select_option("#complexityFilter", "")
         scan(tp)
         tp.wait_for_timeout(1200)
         c.check(
@@ -764,6 +834,557 @@ def run(headed):
             "POOR AT 1" in tp.inner_text("#resultsGrid").upper(),
             f'(strip {tp.inner_text("#resultsGrid")!r})',
         )
+
+        print("\nadvanced filters")
+        ap = context.new_page()
+        ap.on("pageerror", lambda e: errors.append(str(e)))
+        stub_backend(ap)
+        stub_advanced_fields(ap)
+        ap.goto(f"{base}/", wait_until="networkidle", timeout=60000)
+        ap.wait_for_timeout(1200)
+
+        c.check(
+            "complexity no longer offers two ways to say Any",
+            ap.eval_on_selector_all(
+                "#complexityFilter option", "e => e.map(o => o.value)"
+            ) == ["", "2", "3", "4", "custom"],
+        )
+
+        ap.eval_on_selector("#advancedFilterToggle", "e => e.click()")
+        ap.wait_for_timeout(200)
+        # Only the dimension under test separates the cards.
+        ap.fill("#playersFilter", "")
+        ap.select_option("#timeFilter", "")
+        ap.select_option("#complexityFilter", "")
+        ap.wait_for_timeout(300)
+        scan(ap)
+        ap.wait_for_timeout(600)
+
+        def fitting(page):
+            return sorted(page.eval_on_selector_all(
+                "#resultsGrid .matchCard",
+                """e => e.filter(c => !['0', '-1', '-2'].includes(c.dataset.fit))
+                         .map(c => c.querySelector('.matchName').textContent)""",
+            ))
+
+        def verdicts(page):
+            # The tile hides this text -- the box on the photo carries the
+            # verdict -- so read it rather than looking for it on screen. That
+            # it is legible when the card is expanded is checked separately.
+            return page.eval_on_selector_all(
+                "#resultsGrid .matchCard .filterFit", "e => e.map(f => f.textContent)"
+            )
+
+        everything = fitting(ap)
+        c.check(
+            "all five fixtures fit with nothing set",
+            len(everything) == 5,
+            f"({everything})",
+        )
+        c.check("the theme button starts on Any",
+                ap.inner_text("#categoryFilterButton") == "Any")
+        c.check("the advanced toggle counts nothing yet",
+                ap.inner_text("#advancedFilterToggle") == "Advanced")
+
+        ap.click("#categoryFilterButton")
+        ap.wait_for_timeout(300)
+        c.check("the theme picker opens", ap.is_visible("#filterPickerSheet"))
+        # With nothing selected the chips row is display:none and stops being a
+        # child at all. A positional row template then handed the list the
+        # unbounded track and collapsed the actions row, putting Done past the
+        # bottom edge -- so check it while the row is absent.
+        c.check(
+            "Done is inside the sheet with no chips row",
+            rect(ap, "#filterPickerDoneButton")["bottom"]
+            <= rect(ap, "#filterPickerSheet")["bottom"],
+            f'(done {rect(ap, "#filterPickerDoneButton")}, '
+            f'sheet {rect(ap, "#filterPickerSheet")})',
+        )
+        # The values the games on screen carry lead the list: everything else in
+        # the vocabulary can only ever remove cards.
+        on_screen = ap.eval_on_selector_all(
+            "#filterPickerList .filterPickerHeading:first-child ~ .filterPickerOption",
+            "e => e.map(o => o.dataset.value)",
+        )
+        c.check(
+            "the photo's own themes are grouped first",
+            sorted(on_screen[:4]) == ["Abstract Strategy", "Adventure",
+                                      "Card Game", "Science Fiction"],
+            f"({on_screen[:6]})",
+        )
+        c.check(
+            "and the rest of the vocabulary is offered below",
+            ap.eval_on_selector_all("#filterPickerList .filterPickerOption", "e => e.length") > 50,
+        )
+        c.check(
+            "options carry how many games in the catalog use them",
+            ap.eval_on_selector(
+                '.filterPickerOption[data-value="Card Game"] .filterPickerOptionCount',
+                "e => Number(e.textContent) > 0",
+            ),
+        )
+
+        ap.click('.filterPickerOption[data-value="Card Game"] input')
+        ap.wait_for_timeout(500)
+        c.check(
+            "picking one theme keeps just the games that carry it",
+            fitting(ap) == ["Juicy Fruits", "Verdant"],
+            f"({fitting(ap)})",
+        )
+        c.check("the button names the single choice",
+                ap.inner_text("#categoryFilterButton") == "Card Game")
+        c.check("the advanced toggle counts it",
+                ap.inner_text("#advancedFilterToggle") == "Advanced · 1",
+                f'({ap.inner_text("#advancedFilterToggle")!r})')
+
+        # Two selected values mean "either", not "both" -- the AND reading
+        # empties the strip almost every time.
+        ap.click('.filterPickerOption[data-value="Adventure"] input')
+        ap.wait_for_timeout(500)
+        c.check(
+            "a second theme widens rather than narrows",
+            fitting(ap) == ["Clank!: A Deck-Building Adventure", "Juicy Fruits", "Verdant"],
+            f"({fitting(ap)})",
+        )
+        c.check("the button counts the choices",
+                ap.inner_text("#categoryFilterButton") == "2 selected")
+        c.check(
+            "each choice gets a chip",
+            ap.eval_on_selector_all("#filterPickerChips .filterPickerChip", "e => e.length") == 2,
+        )
+        c.check(
+            "and Done is still inside the sheet with the chips row present",
+            rect(ap, "#filterPickerDoneButton")["bottom"]
+            <= rect(ap, "#filterPickerSheet")["bottom"],
+            f'(done {rect(ap, "#filterPickerDoneButton")}, '
+            f'sheet {rect(ap, "#filterPickerSheet")})',
+        )
+
+        ap.fill("#filterPickerSearch", "fantas")
+        ap.wait_for_timeout(300)
+        searched = ap.eval_on_selector_all(
+            "#filterPickerList .filterPickerOption", "e => e.map(o => o.dataset.value)"
+        )
+        c.check(
+            "search narrows the list",
+            searched and all("fantas" in v.lower() for v in searched),
+            f"({searched[:5]})",
+        )
+        ap.fill("#filterPickerSearch", "")
+        ap.wait_for_timeout(300)
+
+        # A chip removes its value: the list can be scrolled far from a
+        # selection, and hunting the row down again to untick it is worse.
+        ap.click("#filterPickerChips .filterPickerChip")
+        ap.wait_for_timeout(500)
+        # Chips are in selection order, so the first is Card Game -- removing it
+        # leaves Adventure, and with it only Clank!.
+        c.check(
+            "a chip removes its value",
+            ap.eval_on_selector_all("#filterPickerChips .filterPickerChip", "e => e.length") == 1
+            and fitting(ap) == ["Clank!: A Deck-Building Adventure"],
+            f"({fitting(ap)})",
+        )
+        c.check(
+            "and the list checkbox follows it back off",
+            ap.eval_on_selector_all(
+                "#filterPickerList .filterPickerOption input:checked", "e => e.length"
+            ) == 1,
+        )
+
+        ap.click("#filterPickerClearButton")
+        ap.wait_for_timeout(500)
+        c.check("clear puts every card back", len(fitting(ap)) == 5, f"({fitting(ap)})")
+        c.check("and the button reads Any again",
+                ap.inner_text("#categoryFilterButton") == "Any")
+
+        ap.click("#filterPickerDoneButton")
+        ap.wait_for_timeout(300)
+        c.check("Done closes the picker", not ap.is_visible("#filterPickerSheet"))
+
+        ap.click("#mechanicFilterButton")
+        ap.wait_for_timeout(300)
+        ap.click('.filterPickerOption[data-value="Tile Placement"] input')
+        ap.click("#filterPickerDoneButton")
+        ap.wait_for_timeout(500)
+        c.check(
+            "the mechanic picker filters on its own field",
+            fitting(ap) == ["Juicy Fruits", "Verdant"],
+            f"({fitting(ap)})",
+        )
+        ap.click("#mechanicFilterButton")
+        ap.wait_for_timeout(300)
+        ap.click("#filterPickerClearButton")
+        ap.click("#filterPickerDoneButton")
+        ap.wait_for_timeout(400)
+
+        # Youngest player: caps the game's recommended age rather than setting a
+        # floor. Reading it the other way round would keep the 14+ games.
+        ap.select_option("#youngestAgeFilter", "8")
+        ap.wait_for_timeout(500)
+        c.check(
+            "the youngest-player age keeps games rated at or below it",
+            fitting(ap) == ["Juicy Fruits", "Santorini: New York"],
+            f"({fitting(ap)})",
+        )
+        c.check(
+            "a game over the age says so",
+            "Ages 14+" in verdicts(ap),
+            f"({verdicts(ap)})",
+        )
+        ap.select_option("#youngestAgeFilter", "")
+
+        # A card that fails a filter has to be able to say which one: with this
+        # many filters the greyed box on the photo no longer implies the reason.
+        ap.select_option("#youngestAgeFilter", "8")
+        ap.wait_for_timeout(500)
+        ap.eval_on_selector(
+            "#resultsGrid .matchCard[data-fit='0'] .cardExpandButton", "e => e.click()"
+        )
+        ap.wait_for_timeout(400)
+        c.check(
+            "a filtered-out card shows why once expanded",
+            "Ages" in ap.inner_text("#resultsGrid .matchCard.isExpanded"),
+            f"({ap.inner_text('#resultsGrid .matchCard.isExpanded')!r})",
+        )
+        ap.eval_on_selector(
+            "#resultsGrid .matchCard.isExpanded .cardExpandButton", "e => e.click()"
+        )
+        ap.select_option("#youngestAgeFilter", "")
+        ap.wait_for_timeout(400)
+        c.check("the advanced toggle drops back to bare",
+                ap.inner_text("#advancedFilterToggle") == "Advanced",
+                f'({ap.inner_text("#advancedFilterToggle")!r})')
+
+        # The fields the advanced filters read are on the expanded card, so a
+        # verdict can be checked against what the game actually carries.
+        ap.eval_on_selector("#resultsGrid .matchCard .cardExpandButton", "e => e.click()")
+        ap.wait_for_timeout(400)
+        expanded = ap.inner_text("#resultsGrid .matchCard.isExpanded")
+        c.check(
+            "the expanded card shows themes, mechanics, age and language",
+            all(word in expanded for word in ("Themes", "Mechanics", "Age", "Language")),
+            f"({expanded!r})",
+        )
+
+        print("\ntime and complexity ranges")
+        rp = context.new_page()
+        rp.on("pageerror", lambda e: errors.append(str(e)))
+        stub_backend(rp)
+        rp.goto(f"{base}/", wait_until="networkidle", timeout=60000)
+        rp.wait_for_timeout(1200)
+        rp.eval_on_selector("#advancedFilterToggle", "e => e.click()")
+        rp.wait_for_timeout(300)
+
+        def range_state(page):
+            return page.evaluate("""() => ({
+                time: document.getElementById('timeRangeLabel').textContent,
+                weight: document.getElementById('weightRangeLabel').textContent,
+                timeMax: document.getElementById('timeRangeMax').value,
+                weightMax: document.getElementById('weightRangeMax').value,
+                timePreset: document.getElementById('timeFilter').value,
+                weightPreset: document.getElementById('complexityFilter').value,
+            })""")
+
+        def set_range(page, kind, which, index):
+            page.eval_on_selector(
+                f"#{kind}Range{which}",
+                """(e, v) => { e.value = String(v);
+                               e.dispatchEvent(new Event('input', {bubbles: true})); }""",
+                index,
+            )
+            page.wait_for_timeout(250)
+
+        # The select and the slider are two views of one range, so the sliders
+        # must open on whatever the select already says -- not on a second copy
+        # of the defaults that could drift from it. The wording differs on
+        # purpose: the select names the cap ("Medium"), the label names every
+        # band the range covers ("Light or medium"), which is the same set.
+        start = range_state(rp)
+        c.check(
+            "the sliders start from the basic selects",
+            start["time"] == "Up to 30 min" and start["weight"] == "Light or medium",
+            f"({start})",
+        )
+
+        rp.select_option("#timeFilter", "60")
+        rp.wait_for_timeout(300)
+        c.check(
+            "choosing a preset moves the slider",
+            range_state(rp)["time"] == "Up to 60 min",
+            f"({range_state(rp)})",
+        )
+
+        # The ask that a single cap cannot express.
+        set_range(rp, "time", "Min", 2)
+        after = range_state(rp)
+        c.check(
+            "a lower bound reads as a range",
+            after["time"] == "Between 30 and 60 min",
+            f"({after})",
+        )
+        c.check(
+            "and the select says Custom, since it cannot show a lower bound",
+            after["timePreset"] == "custom",
+            f"({after})",
+        )
+        c.check(
+            "which the advanced toggle counts",
+            rp.inner_text("#advancedFilterToggle") == "Advanced · 1",
+            f'({rp.inner_text("#advancedFilterToggle")!r})',
+        )
+
+        # Choosing a preset drops the lower bound rather than keeping one the
+        # basic panel has no way to show.
+        rp.select_option("#timeFilter", "90")
+        rp.wait_for_timeout(300)
+        c.check(
+            "a preset clears the lower bound it cannot display",
+            range_state(rp)["time"] == "Up to 90 min",
+            f"({range_state(rp)})",
+        )
+
+        set_range(rp, "weight", "Max", 3)
+        set_range(rp, "weight", "Min", 1)
+        c.check(
+            "two complexity bands read as words",
+            range_state(rp)["weight"] == "Light or medium",
+            f"({range_state(rp)})",
+        )
+        set_range(rp, "weight", "Min", 2)
+        c.check(
+            "one band names itself",
+            range_state(rp)["weight"] == "Medium",
+            f"({range_state(rp)})",
+        )
+        set_range(rp, "weight", "Max", 5)
+        c.check(
+            "three or more read as a span",
+            range_state(rp)["weight"] == "Medium to very heavy",
+            f"({range_state(rp)})",
+        )
+
+        # Thumbs may not cross or meet: a zero-width range excludes everything,
+        # which no drag is ever asking for.
+        set_range(rp, "weight", "Min", 5)
+        c.check(
+            "the thumbs cannot cross",
+            rp.eval_on_selector("#weightRangeMin", "e => Number(e.value)")
+            < rp.eval_on_selector("#weightRangeMax", "e => Number(e.value)"),
+            f"({range_state(rp)})",
+        )
+
+        rp.select_option("#complexityFilter", "")
+        rp.select_option("#timeFilter", "")
+        rp.wait_for_timeout(300)
+        c.check(
+            "Any at both ends reads as no filter",
+            range_state(rp) | {"time": "Any length", "weight": "Any complexity"}
+            == range_state(rp),
+            f"({range_state(rp)})",
+        )
+
+        # A range filters on the game's longest play, at both ends -- the rule
+        # the max-only filter always used.
+        rp.fill("#playersFilter", "")
+        set_range(rp, "time", "Min", 3)
+        scan(rp)
+        rp.wait_for_timeout(600)
+        kept = sorted(rp.eval_on_selector_all(
+            "#resultsGrid .matchCard",
+            """e => e.filter(c => !['0', '-1', '-2'].includes(c.dataset.fit))
+                     .map(c => c.querySelector('.matchName').textContent)""",
+        ))
+        # Bad Company plays 30 min, Santorini 15-30: both are over before 45.
+        c.check(
+            "a lower time bound drops the games that end too soon",
+            kept == ["Clank!: A Deck-Building Adventure", "Juicy Fruits", "Verdant"],
+            f"({kept})",
+        )
+        c.check(
+            "and says why",
+            "Under 45 min" in rp.eval_on_selector_all(
+                "#resultsGrid .matchCard .filterFit", "e => e.map(f => f.textContent)"
+            ),
+            f'({rp.eval_on_selector_all("#resultsGrid .matchCard .filterFit", "e => e.map(f => f.textContent)")})',
+        )
+        rp.close()
+
+        print("\nwhile the matcher is still working")
+        lp = context.new_page()
+        lp.on("pageerror", lambda e: errors.append(str(e)))
+        stub_backend(lp)
+        stub_pending_match(lp)
+        lp.goto(f"{base}/", wait_until="networkidle", timeout=60000)
+        lp.wait_for_timeout(1200)
+        lp.eval_on_selector("#applyFiltersButton", "e => e.click()")
+        lp.eval_on_selector(
+            'button[data-example-src="examples/game-bag.jpg"]', "e => e.click()"
+        )
+
+        # Every value the line takes from the moment the strip opens. A ratio
+        # here would be a statement about the filters that is not true yet, and
+        # a bare box count is a number sitting where the verdict goes.
+        said = []
+        for _ in range(40):
+            lp.wait_for_timeout(150)
+            text = lp.eval_on_selector("#resultCount", "e => e.textContent")
+            if text and (not said or said[-1] != text):
+                said.append(text)
+
+        c.check(
+            "the count line only says it is loading",
+            said == ["Loading..."],
+            f"({said})",
+        )
+        c.check(
+            "some crops really were answered, so this is mid-scan not no-scan",
+            lp.eval_on_selector_all(
+                "#resultsGrid .matchCard",
+                "e => e.filter(c => c.dataset.fit !== '-1').length",
+            ) == 2,
+        )
+        # `Box 3` looked like an answer. Five cards naming themselves, each with
+        # a live "Wrong game?" beside it, read as a scan that finished and
+        # recognised nothing -- while the count line said it was still loading.
+        c.check(
+            "an unanswered card has no name yet",
+            lp.eval_on_selector_all(
+                "#resultsGrid .matchCard[data-pending='yes'] .matchName",
+                "e => e.every(n => n.textContent.trim() === '')",
+            ),
+        )
+        c.check(
+            "and does not offer to report a match it has not made",
+            lp.eval_on_selector_all(
+                "#resultsGrid .matchCard[data-pending='yes'] .cardReportWrongButton",
+                "e => e.every(b => getComputedStyle(b).display === 'none')",
+            ),
+        )
+        lp.close()
+
+        print("\nreadable and hittable")
+        tp = context.new_page()
+        tp.on("pageerror", lambda e: errors.append(str(e)))
+        stub_backend(tp)
+        # Pages share one browser context, so the contributor section above
+        # leaves its password in localStorage and every later page logs itself
+        # back in -- where "Wrong game?" is deliberately hidden. These are the
+        # player's controls, so the page has to start as a player.
+        tp.add_init_script(
+            "try { localStorage.removeItem('gamematchForceContributor');"
+            " localStorage.removeItem('gamematch-contributor-password'); } catch (e) {}"
+        )
+        tp.goto(f"{base}/", wait_until="networkidle", timeout=60000)
+        tp.eval_on_selector("html", "e => { e.dataset.theme = 'light' }")
+        scan(tp)
+        c.check(
+            "measuring the player's view, not the contributor's",
+            not tp.evaluate("() => document.body.classList.contains('contributorMode')"),
+        )
+
+        # The light theme overrode every other accent but inherited the dark
+        # theme's --danger, a pale salmon that lands at 1.94:1 on the light
+        # panel -- on the one control a player uses to report a bad match.
+        contrast = tp.evaluate(
+            """() => {
+              const parse = c => { const m = c.match(/[\\d.]+/g).map(Number);
+                                   return m.length === 4 ? m : [...m, 1]; };
+              const over = (f, b) => [0,1,2].map(i => f[i]*f[3] + b[i]*(1-f[3]));
+              const lum = ([r,g,b]) => { const f = v => { v /= 255;
+                  return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); };
+                return 0.2126*f(r) + 0.7152*f(g) + 0.0722*f(b); };
+              const bg = el => { const stack = []; let e = el;
+                while (e) { const c = parse(getComputedStyle(e).backgroundColor);
+                            if (c[3] > 0) stack.push(c); e = e.parentElement; }
+                let base = [255, 255, 255];
+                for (let i = stack.length - 1; i >= 0; i--) base = over(stack[i], base);
+                return base; };
+              const el = document.querySelector('.cardReportWrongButton');
+              const back = bg(el.parentElement);
+              const fore = over(parse(getComputedStyle(el).color), back);
+              const [a, b] = [lum(fore), lum(back)];
+              return (Math.max(a,b) + 0.05) / (Math.min(a,b) + 0.05);
+            }"""
+        )
+        c.check(
+            "Wrong game? is readable in the light theme",
+            contrast >= 4.5,
+            f"({contrast:.2f}:1)",
+        )
+
+        # Measured by hit-testing rather than by box, since several of these
+        # deliberately draw small and extend their hit area with a pseudo. The
+        # BGG link is the cautionary one: it is masked, and a mask clips the
+        # pseudo too, so its expander silently did nothing.
+        targets = tp.evaluate(
+            """() => {
+              const owns = (el, t) => { let e = el;
+                while (e) { if (e === t) return true; e = e.parentElement; } return false; };
+              const span = t => { const r = t.getBoundingClientRect();
+                const cx = r.left + r.width/2, cy = r.top + r.height/2;
+                const probe = (dx, dy) => { for (let d = 0; d <= 60; d++) {
+                    const el = document.elementFromPoint(cx + dx*d, cy + dy*d);
+                    if (!el || !owns(el, t)) return d - 1; } return 60; };
+                return [probe(-1,0) + probe(1,0) + 1, probe(0,-1) + probe(0,1) + 1]; };
+              const out = {};
+              for (const [name, sel] of [
+                ['wrong', '.matchCard .cardReportWrongButton'],
+                ['expand', '.matchCard .cardExpandButton'],
+                ['bgg', '.matchCard .gameDetails > a'],
+                ['missing', '#missingBoxesButton'],
+              ]) {
+                // The strip scrolls sideways, so the first match in the DOM is
+                // not necessarily one whose centre is on screen to hit-test.
+                const el = [...document.querySelectorAll(sel)].find(e => {
+                  const r = e.getBoundingClientRect();
+                  if (!r.width || !r.height) return false;
+                  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                  return cx >= 0 && cx <= innerWidth && cy >= 0 && cy <= innerHeight;
+                });
+                out[name] = el ? span(el) : null;
+              }
+              return out;
+            }"""
+        )
+        for name in ("wrong", "expand", "bgg", "missing"):
+            size = targets.get(name)
+            c.check(
+                f"{name} is big enough to hit",
+                bool(size) and size[0] >= 24 and size[1] >= 24,
+                f"({size[0]}x{size[1]})" if size else "(not on screen to measure)",
+            )
+        tp.close()
+
+        print("\non a laptop-width viewport")
+        wp = context.new_page()
+        wp.on("pageerror", lambda e: errors.append(str(e)))
+        wp.set_viewport_size({"width": 1200, "height": 900})
+        stub_backend(wp)
+        wp.goto(f"{base}/", wait_until="networkidle", timeout=60000)
+        scan(wp)
+
+        # A media query pinned the strip top-right at phone width while the base
+        # rule still set bottom: 0 and a fixed height, so it became a 390px box
+        # floating over the photo with its cards clipped under the filter bar.
+        panel = rect(wp, "#resultsPanel")
+        card = rect(wp, "#resultsGrid .matchCard")
+        c.check(
+            "the strip spans the window instead of floating over the photo",
+            panel["left"] == 0 and panel["width"] == 1200,
+            f"({panel})",
+        )
+        c.check(
+            "and sits at the bottom of it",
+            panel["bottom"] >= 890,
+            f"(bottom {panel['bottom']})",
+        )
+        c.check(
+            "so no card is clipped by the chrome above it",
+            card["top"] > panel["top"],
+            f"(card {card['top']}, panel {panel['top']})",
+        )
+        wp.close()
 
         print("\nconsole")
         c.check("no page errors", not errors, f"({errors[:2]})")

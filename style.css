@@ -83,6 +83,12 @@ html[data-theme="light"] {
   --accent: #3e63ff;
   --accent-strong: #2638ac;
   --success: #3e63ff;
+  /* The light theme overrode every other accent but inherited the dark
+     theme's --danger (#ff9b8f) -- a pale salmon tuned for a near-black
+     background, which lands at 1.94:1 on the light panel. "Wrong game?" is how
+     a player reports a bad match, so it was the least readable text in the app
+     and the one carrying the feedback the corrections pipeline runs on. */
+  --danger: #b3261e;
   --stage-gradient: linear-gradient(135deg, #f7f3ed 0%, #e9ecff 50%, #f1e6ff 100%);
   --panel-gradient: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(238, 232, 255, 0.82));
   --card-gradient: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(237, 233, 255, 0.7));
@@ -962,6 +968,11 @@ body.contributorMode #infoButton {
   border-bottom: 1px solid var(--panel-border);
   background: var(--panel-bg-strong);
   backdrop-filter: blur(14px);
+  /* The advanced panel now carries eleven controls, which on a short screen is
+     taller than the room above the photo. Capped and scrollable rather than
+     allowed to push the photo off the bottom of the window. */
+  max-height: calc(100vh - var(--topbar-height, 46px) - 140px);
+  overflow-y: auto;
 }
 
 /* Three equal columns. Dropping the toggle and Done leaves ~120px each, which
@@ -1139,6 +1150,379 @@ body.filterPanelOpen #filterVisibilityButton {
 
 #advancedFilterPanel input {
   padding: 8px 7px;
+}
+
+/* Carries how many advanced filters are set, so a card failing one the user
+   set once and cannot see is still explainable. */
+#advancedFilterToggle.isSet {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  color: var(--accent-strong);
+}
+
+/* A range spans the panel: its label is a sentence ("Between 30 and 60 min"),
+   and two thumbs need the room to be separately grabbable. */
+.rangeField {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rangeField > span {
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Two <input type="range"> stacked on one track. Each keeps its own focus ring
+   and keyboard handling -- a single custom widget would have to reimplement
+   both -- so only the thumbs take pointer events and the inputs' own tracks are
+   invisible. */
+/* The track is inset by half a thumb at each end, because that is exactly how
+   far the thumb's centre travels -- an inset track over a full-width input puts
+   the fill out of step with the thumbs at both extremes. */
+.rangeSlider {
+  position: relative;
+  height: 28px;
+}
+
+.rangeTrack {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  left: 9px;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: var(--app-faint);
+}
+
+.rangeFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+#advancedFilterPanel .rangeSlider input[type="range"] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  width: auto;
+  height: 28px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#advancedFilterPanel .rangeSlider input[type="range"]:focus-visible {
+  outline: none;
+}
+
+#advancedFilterPanel .rangeSlider input[type="range"]::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--app-bg);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  pointer-events: auto;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#advancedFilterPanel .rangeSlider input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--app-bg);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+#advancedFilterPanel .rangeSlider input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+#advancedFilterPanel .rangeSlider input[type="range"]:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+#advancedFilterPanel .rangeSlider input[type="range"]:disabled::-webkit-slider-thumb {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Theme and mechanic sit on their own row, side by side: their buttons carry a
+   value name rather than a short option, so a third of the width truncates
+   almost everything. */
+.filterPickerRow {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.filterField {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.filterField > span {
+  color: var(--app-soft);
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* Sized to match the selects beside it -- it stands in for one. */
+.filterPickerButton {
+  overflow: hidden;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-size: 15px;
+  font-weight: 720;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.filterPickerButton.isSet {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  color: var(--accent-strong);
+}
+
+/* An overlay, not an inline expansion of the filter panel: the panel is fixed
+   chrome the photo has to clear, so growing it by a scrollable 85-row list
+   would push the photo down and back on every open. */
+#filterPickerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: grid;
+  align-items: end;
+  background: var(--overlay-bg);
+}
+
+#filterPickerOverlay[hidden] {
+  display: none;
+}
+
+/* Flex, not a row template: the chips row is display:none until something is
+   selected, so it stops being a grid item -- and a positional template then
+   handed the list the unbounded track and collapsed the actions row, pushing
+   Done off the bottom of the sheet. */
+#filterPickerSheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(460px, 100vw);
+  max-height: 82vh;
+  margin: 0 auto;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  border: 1px solid var(--panel-border);
+  border-radius: 14px 14px 0 0;
+  background: var(--app-bg);
+  box-shadow: var(--panel-shadow);
+}
+
+#filterPickerHeader {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+#filterPickerTitle {
+  flex: 1;
+  margin: 0;
+  color: var(--app-text-strong);
+  font-size: 16px;
+}
+
+#filterPickerClearButton {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#filterPickerCloseButton svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#filterPickerClearButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#filterPickerSearch {
+  flex: none;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-size: 16px;
+}
+
+#filterPickerChips {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 22vh;
+  overflow-y: auto;
+}
+
+#filterPickerChips[hidden] {
+  display: none;
+}
+
+/* A chip is the remove control for its value: the list can be scrolled far away
+   from a selection, and hunting for the row again to untick it is worse than
+   tapping the thing that says it is on. */
+.filterPickerChip {
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filterPickerChip::after {
+  content: " ×";
+}
+
+#filterPickerList {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 120px;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  -webkit-overflow-scrolling: touch;
+}
+
+.filterPickerHeading {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: 8px 2px 4px;
+  background: var(--app-bg);
+  color: var(--app-soft);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.filterPickerHeading[hidden] {
+  display: none;
+}
+
+.filterPickerOption {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 42px;
+  padding: 6px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 40%, transparent);
+  color: var(--app-text);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.filterPickerOption input[type="checkbox"] {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--success);
+}
+
+.filterPickerOptionName {
+  flex: 1;
+  min-width: 0;
+}
+
+.filterPickerOption.isSelected .filterPickerOptionName {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+/* How many games in the catalog carry the value -- the reason the list is
+   frequency-ordered rather than alphabetical. */
+.filterPickerOptionCount {
+  flex: none;
+  color: var(--app-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.filterPickerEmpty {
+  margin: 12px 2px;
+  color: var(--app-soft);
+  font-size: 13px;
+}
+
+#filterPickerActions {
+  display: flex;
+  flex: none;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#filterPickerSummary {
+  color: var(--app-soft);
+  font-size: 12px;
+}
+
+#filterPickerDoneButton {
+  min-height: 38px;
+  padding: 8px 18px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--primary-gradient);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 #controls {
@@ -2019,6 +2403,7 @@ body.manualBoxMode #examplePanel {
 }
 
 #missingBoxesButton {
+  position: relative;
   margin-left: auto;
   padding: 0;
   border: 0;
@@ -2029,6 +2414,14 @@ body.manualBoxMode #examplePanel {
   text-decoration: underline;
   white-space: nowrap;
   cursor: pointer;
+}
+
+/* Sits in the strip header, so it can grow downward as well as up without
+   colliding with anything. */
+#missingBoxesButton::after {
+  position: absolute;
+  inset: -14px -10px;
+  content: "";
 }
 
 #missingBoxesButton:hover,
@@ -2208,16 +2601,30 @@ body.manualBoxMode #examplePanel {
    title. Lifted out of the flow and parked left of the dismiss button, as an
    icon -- "Open on BGG" costs a whole row on a tile this size. It only renders
    for confident matches, since renderGameDetails returns early otherwise. */
+/* The link is a 34px tap target that draws a 17px glyph, not a 17px link.
+   The icon has to be masked onto the ::before rather than the anchor itself:
+   a mask clips everything the element paints, pseudo-elements included, so an
+   invisible ::after hit-area expander drawn on a masked anchor is masked away
+   with it -- the hit area stayed 17x17 no matter how far the inset reached. */
 .matchCard .gameDetails > a {
   position: absolute;
-  top: 7px;
-  right: 7px;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  opacity: 0.55;
+  font-size: 0;
+}
+
+.matchCard .gameDetails > a::before {
   display: block;
   width: 17px;
   height: 17px;
-  opacity: 0.55;
   background-color: currentColor;
-  font-size: 0;
+  content: "";
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M14%204h6v6%27%2F%3E%3Cpath%20d%3D%27M20%204l-8.5%208.5%27%2F%3E%3Cpath%20d%3D%27M18%2014.5V19a1.6%201.6%200%200%201-1.6%201.6H5A1.6%201.6%200%200%201%203.4%2019V7.6A1.6%201.6%200%200%201%205%206h4.5%27%2F%3E%3C%2Fsvg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M14%204h6v6%27%2F%3E%3Cpath%20d%3D%27M20%204l-8.5%208.5%27%2F%3E%3Cpath%20d%3D%27M18%2014.5V19a1.6%201.6%200%200%201-1.6%201.6H5A1.6%201.6%200%200%201%203.4%2019V7.6A1.6%201.6%200%200%201%205%206h4.5%27%2F%3E%3C%2Fsvg%3E");
   -webkit-mask-repeat: no-repeat;
@@ -2240,9 +2647,11 @@ body.manualBoxMode #examplePanel {
   padding-right: 24px;
 }
 
-/* Contributors keep the dismiss X, so the link steps aside for it there. */
+/* Contributors keep the dismiss X, so the link steps aside for it there.
+   Was 36px against a 17px-wide link; the box is now 34px wide with the glyph
+   centred in it, so the same glyph position is 8.5px further left. */
 body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .gameDetails > a {
-  right: 36px;
+  right: 28px;
 }
 
 body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
@@ -2259,6 +2668,43 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
   line-height: 1.2;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 1;
+}
+
+/* A card waiting on the matcher has no name yet, so it shimmers instead of
+   naming itself `Box 3`. The count line already says "Loading..."; a card that
+   states a title and offers "Wrong game?" beside it contradicts that and reads
+   as a scan that finished and recognised nothing. */
+.matchCard[data-pending="yes"] .matchName::before {
+  display: block;
+  width: 78%;
+  height: 0.95em;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--app-text) 12%, transparent) 25%,
+    color-mix(in srgb, var(--app-text) 22%, transparent) 50%,
+    color-mix(in srgb, var(--app-text) 12%, transparent) 75%
+  );
+  background-size: 240% 100%;
+  animation: matchNameShimmer 1.4s ease-in-out infinite;
+  content: "";
+}
+
+/* Nothing to be wrong about yet. Offering the report before there is a match
+   invites feedback on an answer the app has not given. */
+.matchCard[data-pending="yes"] .cardReportWrongButton {
+  display: none;
+}
+
+@keyframes matchNameShimmer {
+  from { background-position: 140% 0; }
+  to { background-position: -40% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .matchCard[data-pending="yes"] .matchName::before {
+    animation: none;
+  }
 }
 
 /* In the action row rather than on its own line, which cost ~15px and tipped
@@ -2342,6 +2788,7 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
 /* The player's one correction: a quiet red line under the facts it disputes,
    present on the tile itself rather than hidden behind See more. */
 .cardReportWrongButton {
+  position: relative;
   display: block;
   justify-self: start;
   align-self: start;
@@ -2357,6 +2804,18 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
   text-align: left;
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* Same trick as .cardExpandButton: an 11px underlined line is the right visual
+   weight for a quiet correction, and a 13px-tall tap target is the wrong hit
+   area for one. Extends up and sideways only -- a symmetric inset pushes past
+   the card box and tips the tile into overflow. `position: relative` above is
+   load-bearing: without it this anchors to .matchCard and becomes a full-card
+   invisible overlay that swallows taps meant for the card. */
+.cardReportWrongButton::after {
+  position: absolute;
+  inset: -13px -10px -4px;
+  content: "";
 }
 
 .matchCard.isExpanded .cardReportWrongButton {
@@ -2511,6 +2970,13 @@ html[data-theme="light"] #resultsGrid > .matchCard.isExpanded {
 /* Expanded, every field is back -- rank, rating, type and year included. */
 .matchCard.isExpanded .gameDetails > div {
   display: flex;
+}
+
+/* Themes and mechanics run to three names plus a count, which does not fit a
+   half-width cell beside a label. */
+.matchCard.isExpanded .gameDetails > div[data-field="themes"],
+.matchCard.isExpanded .gameDetails > div[data-field="mechanics"] {
+  grid-column: 1 / -1;
 }
 
 .matchCard.isExpanded .gameDetails {
@@ -2672,6 +3138,16 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchBody {
    styling; only the text is dropped. */
 .matchCard .filterFit {
   display: none;
+}
+
+/* The other exception: expanded, the verdict earns its line. The tile hides it
+   because the box on the photo already says fit or filtered out -- but with
+   eleven filters "which one did it miss?" is a real question, and only the
+   reasons answer it. A card opened deliberately has the room. */
+#resultsGrid > .matchCard.isExpanded .filterFit {
+  display: inline-block;
+  width: fit-content;
+  margin-top: 2px;
 }
 
 /* The exception: BGG's player-count vote is the one verdict the photo cannot
@@ -3316,12 +3792,14 @@ body.contributorMode .paligemmaHint:not([hidden]) {
 
 /* Wide screens have room for the photo and a full-height column side by side,
    so the sheet gives way to the original layout. */
+/* A wide viewport used to float the strip at the top right, but the base rule
+   still set `bottom: 0` and a fixed height -- so the panel became a 390px box
+   pinned over the photo, its cards clipped under the filter bar, showing a
+   thumbnail and the Yes/No row and nothing else. The bottom strip is the
+   layout that works; a laptop simply gets a wider one. A real two-column
+   desktop treatment is B3 work, not a media query. */
 @media (min-width: 1100px) {
   #resultsPanel {
-    left: auto;
-    right: 12px;
-    top: 86px;
-    width: min(390px, calc(100vw - 24px));
-    max-height: none;
+    padding-inline: max(12px, calc((100vw - 1180px) / 2));
   }
 }

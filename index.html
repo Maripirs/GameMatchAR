@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#080b0d" />
   <title>GameMatch</title>
-  <link rel="stylesheet" href="style.css?v=20260805-ui3" />
+  <!-- Inline rather than a .ico file: this is a static Pages deploy, every
+       request costs a round trip, and the browser asks for /favicon.ico on
+       every single load whether or not one exists -- it was a guaranteed 404
+       per visit. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%233e63ff%27/%3E%3Ccircle cx=%2711%27 cy=%2711%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2721%27 cy=%2721%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2721%27 cy=%2711%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2711%27 cy=%2721%27 r=%272.6%27 fill=%27white%27/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css?v=20260810-ui4" />
 </head>
 <body>
   <main id="stage" aria-label="GameMatch">
@@ -48,6 +53,7 @@
         </div>
         <div id="infoContent">
           <p>Set players, time and complexity at the top, then scan a shelf, upload a photo, or try an example.</p>
+          <p><strong>Advanced</strong> adds theme, mechanic, age, language, rating, rank and more. Theme and mechanic take several values at once and a game needs any one of them.</p>
           <p>Answers appear on the photo: games that fit are highlighted and named, ones that do not are outlined in grey, and a dashed outline means the match was uncertain.</p>
           <p>Tap a box for its card, or a card to flash its box. Each card marks players, time and complexity per filter, so you can see what a game missed on.</p>
           <p>Each card links straight to BoardGameGeek. <strong>See more</strong> opens full details and reporting a wrong match, and <strong>Missing a game?</strong> lets you draw a box the scanner skipped.</p>
@@ -132,6 +138,10 @@
           <input id="playersFilter" type="number" min="1" max="12" inputmode="numeric" placeholder="Any" value="2" />
         </label>
         <label>
+          <!-- A preset for the upper end of the time range in the advanced
+               panel, not a filter of its own: both write the same state.
+               "Custom" is selected for them when the range has a lower bound
+               too, and is not offered in the list. -->
           <span>Max time</span>
           <select id="timeFilter">
             <option value="">Any</option>
@@ -140,19 +150,59 @@
             <option value="60">60 min</option>
             <option value="90">90 min</option>
             <option value="120">2 hr</option>
+            <option value="custom" hidden>Custom</option>
           </select>
         </label>
         <label>
+          <!-- "Any weight" used to sit here alongside "Any" and meant exactly
+               the same thing, which read as a bug. Each rung now excludes
+               something, and like Max time this is the upper end of the
+               advanced range rather than a filter of its own. -->
           <span>Complexity</span>
           <select id="complexityFilter">
             <option value="">Any</option>
-            <option value="2">Low</option>
+            <option value="2">Light</option>
             <option value="3" selected>Medium</option>
-            <option value="5">Any weight</option>
+            <option value="4">Heavy</option>
+            <option value="custom" hidden>Custom</option>
           </select>
         </label>
       </div>
       <div id="advancedFilterPanel" hidden>
+        <!-- Time and complexity are the two filters with a meaningful lower
+             end: "between 30 and 60 minutes" and "light or medium" are real
+             asks that a single cap cannot express. Two overlaid range inputs
+             rather than one control, so each thumb is separately focusable and
+             works from the keyboard. Same state as the selects above -- these
+             add the lower bound the selects have no room for. -->
+        <div class="rangeField">
+          <span id="timeRangeLabel">Any length</span>
+          <div class="rangeSlider" data-range="time">
+            <div class="rangeTrack"><div class="rangeFill" data-range-fill="time"></div></div>
+            <input id="timeRangeMin" type="range" min="0" max="8" step="1" value="0" aria-label="Shortest playing time" />
+            <input id="timeRangeMax" type="range" min="0" max="8" step="1" value="2" aria-label="Longest playing time" />
+          </div>
+        </div>
+        <div class="rangeField">
+          <span id="weightRangeLabel">Any complexity</span>
+          <div class="rangeSlider" data-range="weight">
+            <div class="rangeTrack"><div class="rangeFill" data-range-fill="weight"></div></div>
+            <input id="weightRangeMin" type="range" min="1" max="5" step="1" value="1" aria-label="Lightest complexity" />
+            <input id="weightRangeMax" type="range" min="1" max="5" step="1" value="3" aria-label="Heaviest complexity" />
+          </div>
+        </div>
+        <!-- Theme and mechanic are open vocabularies -- 85 and 191 values --
+             so they get a searchable picker rather than a select. -->
+        <div class="filterPickerRow">
+          <div class="filterField">
+            <span id="categoryFilterLabel">Theme</span>
+            <button id="categoryFilterButton" class="filterPickerButton" type="button" aria-haspopup="dialog" aria-expanded="false">Any</button>
+          </div>
+          <div class="filterField">
+            <span id="mechanicFilterLabel">Mechanic</span>
+            <button id="mechanicFilterButton" class="filterPickerButton" type="button" aria-haspopup="dialog" aria-expanded="false">Any</button>
+          </div>
+        </div>
         <label>
           <span>Rating</span>
           <select id="minRatingFilter">
@@ -186,17 +236,16 @@
             <option value="customizable">Customizable</option>
           </select>
         </label>
-        <label>
-          <span>Version</span>
-          <select id="expansionFilter">
+        <label title="The age of the youngest player. Keeps games rated for that age or younger.">
+          <span>Youngest</span>
+          <select id="youngestAgeFilter">
             <option value="">Any</option>
-            <option value="base">Base games</option>
-            <option value="expansion">Expansions</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
+            <option value="10">10</option>
+            <option value="12">12</option>
+            <option value="14">14</option>
           </select>
-        </label>
-        <label>
-          <span>Since</span>
-          <input id="minYearFilter" type="number" min="1900" max="2100" inputmode="numeric" placeholder="Any" />
         </label>
         <!-- Shown only once some game on screen carries BGG's player poll;
              see refreshBestPlayerCountAvailability in app.js. -->
@@ -207,6 +256,29 @@
       </div>
       <div id="filterActions">
         <button id="applyFiltersButton" type="button">Done</button>
+      </div>
+    </section>
+
+    <!-- An overlay rather than an inline expansion of the filter panel: the
+         panel is fixed chrome the photo has to clear, so growing it by a
+         scrollable 85-row list would push the photo down and back on every
+         open. -->
+    <section id="filterPickerOverlay" aria-label="Filter values" hidden>
+      <div id="filterPickerSheet" role="dialog" aria-modal="true" aria-labelledby="filterPickerTitle">
+        <div id="filterPickerHeader">
+          <h2 id="filterPickerTitle">Theme</h2>
+          <button id="filterPickerClearButton" type="button">Clear</button>
+          <button id="filterPickerCloseButton" class="topIconButton" type="button" aria-label="Close" title="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+          </button>
+        </div>
+        <input id="filterPickerSearch" type="search" autocomplete="off" placeholder="Search" aria-label="Search values" />
+        <div id="filterPickerChips" hidden></div>
+        <div id="filterPickerList"></div>
+        <div id="filterPickerActions">
+          <span id="filterPickerSummary"></span>
+          <button id="filterPickerDoneButton" type="button">Done</button>
+        </div>
       </div>
     </section>
 
@@ -253,7 +325,12 @@
 
     <section id="resultsPanel" hidden>
       <div id="resultsHeader">
-        <span id="resultCount"></span>
+        <!-- The scan's whole verdict lands here ("Loading..." -> "2 of 5 fit
+             your filters"), and it was the one thing a screen reader never
+             heard: the photo and its boxes are canvas, and the cards reorder
+             silently. Polite, so it waits for the reader to finish rather than
+             interrupting mid-card. -->
+        <span id="resultCount" role="status" aria-live="polite"></span>
         <button id="missingBoxesButton" type="button">Missing a game?</button>
       </div>
       <div id="resultsNotice" class="resultsNotice" hidden></div>
@@ -310,6 +387,6 @@
       window.GAMEMATCH_API_BASE = base;
     }
   </script>
-  <script type="module" src="app.js?v=20260805-ui3"></script>
+  <script type="module" src="app.js?v=20260810-ui4"></script>
 </body>
 </html>

@@ -9,6 +9,10 @@ const MATCH_CONCURRENCY = 1;
 const GAME_DETAILS_URL = "./data/game_details.json";
 const GAME_OBSCURE_DETAILS_URL = "./data/game_details_obscure.json";
 const PLAYER_EXPANSION_INDEX_URL = "./data/player_expansion_index.json";
+// The distinct categories and mechanics with per-value game counts. It exists so
+// the theme and mechanic pickers can be built without scanning 5 008 records,
+// and so "what can I filter by?" has an answer before any game data loads.
+const FILTER_VOCABULARY_URL = "./data/filter_vocabulary.json";
 const GAME_SEARCH_INDEX_URL = "./data/games_index.json";
 const GAME_ALIASES_URL = "./data/game_aliases.json";
 const CATALOG_DETAILS_PATH = "/catalog/details";
@@ -74,8 +78,24 @@ const advancedFilterPanel = document.getElementById("advancedFilterPanel");
 const minRatingFilter = document.getElementById("minRatingFilter");
 const maxRankFilter = document.getElementById("maxRankFilter");
 const gameTypeFilter = document.getElementById("gameTypeFilter");
-const expansionFilter = document.getElementById("expansionFilter");
-const minYearFilter = document.getElementById("minYearFilter");
+const youngestAgeFilter = document.getElementById("youngestAgeFilter");
+const timeRangeMin = document.getElementById("timeRangeMin");
+const timeRangeMax = document.getElementById("timeRangeMax");
+const timeRangeLabel = document.getElementById("timeRangeLabel");
+const weightRangeMin = document.getElementById("weightRangeMin");
+const weightRangeMax = document.getElementById("weightRangeMax");
+const weightRangeLabel = document.getElementById("weightRangeLabel");
+const categoryFilterButton = document.getElementById("categoryFilterButton");
+const mechanicFilterButton = document.getElementById("mechanicFilterButton");
+const filterPickerOverlay = document.getElementById("filterPickerOverlay");
+const filterPickerTitle = document.getElementById("filterPickerTitle");
+const filterPickerSearch = document.getElementById("filterPickerSearch");
+const filterPickerChips = document.getElementById("filterPickerChips");
+const filterPickerList = document.getElementById("filterPickerList");
+const filterPickerSummary = document.getElementById("filterPickerSummary");
+const filterPickerClearButton = document.getElementById("filterPickerClearButton");
+const filterPickerCloseButton = document.getElementById("filterPickerCloseButton");
+const filterPickerDoneButton = document.getElementById("filterPickerDoneButton");
 const resultsPanel = document.getElementById("resultsPanel");
 const resultsGrid = document.getElementById("resultsGrid");
 const resultCount = document.getElementById("resultCount");
@@ -183,6 +203,82 @@ let filterImageModeActive = false;
 // set, because the filters now ship with defaults.
 let filterPanelDismissedByUser = false;
 let topBarToggleBound = false;
+let filterVocabulary = { categories: [], mechanics: [] };
+let filterVocabularyLoadPromise = null;
+// Theme and mechanic are multi-select, unlike every other filter, so they live
+// here rather than on a control's value. A game passes if it carries ANY of the
+// selected values -- see checkValueList for why the AND reading is wrong.
+const selectedFilterValues = { categories: new Set(), mechanics: new Set() };
+let activeFilterPicker = "";
+let filterPickerReturnFocus = null;
+
+// The two multi-select filters, which share one picker. `detailField` is the
+// key on a game's detail record; `singular` and `plural` are how a failing card
+// is told what it missed on.
+// Slider positions are indices into this, so the steps are the ones worth
+// stopping on rather than every minute between 0 and 180. The last is "no
+// limit", which is why it is Infinity and not a number.
+const TIME_STEPS = [0, 15, 30, 45, 60, 90, 120, 180, Infinity];
+
+// BGG weight is 1-5 continuous. The thumbs sit on band boundaries, so a range
+// is always a whole number of bands and can be named rather than numbered --
+// which is what makes "light or medium" sayable.
+const WEIGHT_BANDS = { 1: "Light", 2: "Medium", 3: "Heavy", 4: "Very heavy" };
+
+const RANGE_CONTROLS = {
+  time: {
+    get min() { return timeRangeMin; },
+    get max() { return timeRangeMax; },
+    get label() { return timeRangeLabel; },
+    get preset() { return timeFilter; },
+    floor: 0,
+    ceiling: TIME_STEPS.length - 1,
+    // Slider index to the value the filter compares against.
+    value: (index) => TIME_STEPS[index],
+    // The preset select stores minutes, so it maps back to an index.
+    presetIndex: (value) => {
+      const minutes = cleanNumber(value);
+      const index = TIME_STEPS.indexOf(minutes);
+
+      return minutes && index > 0 ? index : TIME_STEPS.length - 1;
+    },
+  },
+  weight: {
+    get min() { return weightRangeMin; },
+    get max() { return weightRangeMax; },
+    get label() { return weightRangeLabel; },
+    get preset() { return complexityFilter; },
+    floor: 1,
+    ceiling: 5,
+    value: (index) => index,
+    presetIndex: (value) => cleanNumber(value) || 5,
+  },
+};
+
+const FILTER_PICKERS = {
+  categories: {
+    detailField: "categories",
+    title: "Theme",
+    searchPlaceholder: "Search themes",
+    allHeading: "All themes",
+    singular: "theme",
+    plural: "themes",
+    get button() {
+      return categoryFilterButton;
+    },
+  },
+  mechanics: {
+    detailField: "mechanics",
+    title: "Mechanic",
+    searchPlaceholder: "Search mechanics",
+    allHeading: "All mechanics",
+    singular: "mechanic",
+    plural: "mechanics",
+    get button() {
+      return mechanicFilterButton;
+    },
+  },
+};
 
 initThemeControl();
 setControlsEnabled(false);
@@ -229,11 +325,33 @@ for (const button of contributorTabButtons) {
 contributorReviewRefreshButton.addEventListener("click", () => loadContributorReview({ force: true }));
 detectorReviewRefreshButton.addEventListener("click", () => loadDetectorReview({ force: true }));
 startDetectorTrainingButton.addEventListener("click", startDetectorTraining);
-[playersFilter, bestPlayerCountFilter, timeFilter, complexityFilter, minRatingFilter, maxRankFilter, gameTypeFilter, expansionFilter, minYearFilter].forEach((control) => {
+[playersFilter, bestPlayerCountFilter, minRatingFilter, maxRankFilter, gameTypeFilter, youngestAgeFilter].forEach((control) => {
   control.addEventListener("input", handleFilterChange);
   control.addEventListener("change", handleFilterChange);
 });
+// The two selects and the two sliders are views of one range each, so both
+// write it rather than being read independently.
+timeFilter.addEventListener("change", () => applyRangePreset("time", timeFilter.value));
+complexityFilter.addEventListener("change", () => applyRangePreset("weight", complexityFilter.value));
+for (const input of [timeRangeMin, timeRangeMax, weightRangeMin, weightRangeMax]) {
+  input.addEventListener("input", handleRangeInput);
+}
 applyFiltersButton.addEventListener("click", closeFilterPanel);
+categoryFilterButton.addEventListener("click", () => openFilterPicker("categories"));
+mechanicFilterButton.addEventListener("click", () => openFilterPicker("mechanics"));
+filterPickerSearch.addEventListener("input", renderFilterPickerList);
+filterPickerClearButton.addEventListener("click", clearActiveFilterPicker);
+filterPickerCloseButton.addEventListener("click", closeFilterPicker);
+filterPickerDoneButton.addEventListener("click", closeFilterPicker);
+filterPickerOverlay.addEventListener("click", (event) => {
+  if (event.target === filterPickerOverlay) {
+    closeFilterPicker();
+  }
+});
+initRangeControls();
+refreshFilterPickerButtons();
+refreshAdvancedFilterSummary();
+ensureFilterVocabularyLoaded();
 // Local-only: see index.html for the guard. Enables the contributor UI without
 // a password so it can be inspected; the server still rejects every contributor
 // request, so nothing privileged actually works.
@@ -299,6 +417,11 @@ window.addEventListener("keydown", (event) => {
       window.requestAnimationFrame(centerCropViewer);
       return;
     }
+  }
+
+  if (event.key === "Escape" && activeFilterPicker) {
+    closeFilterPicker();
+    return;
   }
 
   if (event.key === "Escape" && !infoPanel.hidden) {
@@ -475,7 +598,7 @@ async function processImageCanvas(sourceCanvas, displayElement) {
     const cappedMessage = allConfident.length > confident.length
       ? ` Top ${confident.length} only.`
       : "";
-    showResultShell(confident.length);
+    showResultShell();
 
     const cards = confident.map((detection, index) => {
       const cropCanvas = cropDetection(sourceCanvas, detection);
@@ -697,7 +820,7 @@ async function suggestDinoBoxes() {
       return createMatchCard(cropCanvas, detection, firstCardIndex + index);
     });
     currentResultCards.push(...cards);
-    showResultShell(currentResultCards.length);
+    showResultShell();
     hideResultsPanel();
     dinoSuggestButton.textContent = `Matching ${suggestions.length} new ${
       suggestions.length === 1 ? "box" : "boxes"
@@ -1514,7 +1637,7 @@ async function addManualDetection(detection) {
   const cropCanvas = cropDetection(sourceCanvas, detection);
   const card = createMatchCard(cropCanvas, detection, currentResultCards.length);
   currentResultCards.push(card);
-  showResultShell(currentResultCards.length);
+  showResultShell();
   updateResultStats();
   hideResultsPanel();
 
@@ -1821,7 +1944,12 @@ function createMatchCard(cropCanvas, detection, index) {
   correctionCancelButton.className = "correctionCancelButton";
   correctionStatus.className = "correctionStatus";
 
-  name.textContent = `Box ${index + 1}`;
+  // Left blank on purpose while the matcher works. `Box 1` looked like an
+  // answer -- five cards reading "Box 1..5" with a live "Wrong game?" beside
+  // them read as a scan that finished and identified nothing, which is the
+  // opposite of what is happening. The shimmer in .matchName says "working".
+  name.textContent = "";
+  card.dataset.pending = "yes";
   dismissButton.type = "button";
   dismissButton.textContent = "X";
   dismissButton.setAttribute("aria-label", "Dismiss match");
@@ -1938,6 +2066,7 @@ function createMatchCard(cropCanvas, detection, index) {
     },
     setMatches(matches) {
       const best = matches[0];
+      card.dataset.pending = "no";
       this.matches = matches;
       this.isConfident = isConfidentMatch(matches);
       this.details = best ? gameDetailsById.get(Number(best.id)) || null : null;
@@ -2075,6 +2204,8 @@ function createMatchCard(cropCanvas, detection, index) {
       await this.resolveDetails();
     },
     setError(text, options = {}) {
+      // A failed match is an answer, so the card stops shimmering and says so.
+      card.dataset.pending = "no";
       this.matches = [];
       this.details = null;
       this.isConfident = false;
@@ -2778,6 +2909,58 @@ function ensurePlayerExpansionIndexLoaded() {
   }
 
   return playerExpansionIndexLoadPromise;
+}
+
+function ensureFilterVocabularyLoaded() {
+  if (!filterVocabularyLoadPromise) {
+    filterVocabularyLoadPromise = loadFilterVocabulary();
+  }
+
+  return filterVocabularyLoadPromise;
+}
+
+// Bundled only -- 10 KB, and BGG's vocabulary is finite (85 categories, 191
+// mechanics), so it is a fixed cost that does not grow with the catalog. Losing
+// it is not fatal: the picker falls back to the values the games on screen
+// actually carry, which is the subset that can change anything anyway.
+async function loadFilterVocabulary() {
+  try {
+    const response = await fetch(FILTER_VOCABULARY_URL, { cache: "no-store" });
+
+    if (!response.ok) {
+      throw new Error(`Filter vocabulary returned ${response.status}`);
+    }
+
+    const payload = await response.json();
+
+    filterVocabulary = {
+      categories: parseVocabularyList(payload?.categories),
+      mechanics: parseVocabularyList(payload?.mechanics),
+    };
+    console.log(
+      `Loaded filter vocabulary: ${filterVocabulary.categories.length} themes, `
+      + `${filterVocabulary.mechanics.length} mechanics.`
+    );
+  } catch (error) {
+    console.warn("Filter vocabulary unavailable:", error);
+    filterVocabulary = { categories: [], mechanics: [] };
+  }
+}
+
+function parseVocabularyList(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return entries
+    .map((entry) => ({
+      name: String(entry?.name || "").trim(),
+      games: cleanNumber(entry?.games),
+    }))
+    .filter((entry) => entry.name)
+    // Ordered by frequency so the values worth reaching for are at the top of
+    // the list, not buried alphabetically among the 191.
+    .sort((left, right) => right.games - left.games || left.name.localeCompare(right.name));
 }
 
 async function loadPlayerExpansionIndex() {
@@ -5375,13 +5558,462 @@ function refreshBestPlayerCountAvailability() {
   bestPlayerCountField.hidden = !available;
 }
 
+// ---------------------------------------------------------------------------
+// Time and complexity ranges
+//
+// Both filters have a meaningful lower end -- "between 30 and 60 minutes",
+// "light or medium" -- that a single cap cannot express. The select in the
+// basic panel and the slider in the advanced one are two views of the same
+// range, not two filters: the select writes the upper bound and clears the
+// lower, the slider writes both, and each reflects what the other did.
+// ---------------------------------------------------------------------------
+
+function readRange(kind) {
+  const control = RANGE_CONTROLS[kind];
+  const minIndex = cleanNumber(control.min.value);
+  const maxIndex = cleanNumber(control.max.value);
+  const minSet = minIndex > control.floor;
+  const maxSet = maxIndex < control.ceiling;
+
+  return {
+    minIndex,
+    maxIndex,
+    min: control.value(minIndex),
+    max: control.value(maxIndex),
+    minSet,
+    maxSet,
+    set: minSet || maxSet,
+  };
+}
+
+// Thumbs may not cross, and may not meet: a range of zero width would exclude
+// everything, which no drag is ever asking for.
+function handleRangeInput(event) {
+  const kind = event.target.closest(".rangeSlider").dataset.range;
+  const control = RANGE_CONTROLS[kind];
+  const minIndex = cleanNumber(control.min.value);
+  const maxIndex = cleanNumber(control.max.value);
+
+  if (minIndex >= maxIndex) {
+    if (event.target === control.min) {
+      control.min.value = String(maxIndex - 1);
+    } else {
+      control.max.value = String(minIndex + 1);
+    }
+  }
+
+  syncRangePreset(kind);
+  refreshRangeDisplay(kind);
+  handleFilterChange();
+}
+
+// The basic select only has room for the upper bound, so choosing from it drops
+// any lower bound rather than silently keeping one the user cannot see.
+function applyRangePreset(kind, value) {
+  if (value === "custom") {
+    return;
+  }
+
+  const control = RANGE_CONTROLS[kind];
+
+  control.min.value = String(control.floor);
+  control.max.value = String(control.presetIndex(value));
+  refreshRangeDisplay(kind);
+  handleFilterChange();
+}
+
+function syncRangePreset(kind) {
+  const control = RANGE_CONTROLS[kind];
+  const range = readRange(kind);
+  const preset = [...control.preset.options].find((option) => (
+    option.value !== "custom" && control.presetIndex(option.value) === range.maxIndex
+  ));
+
+  // "Custom" is hidden from the list but still selectable in code, so the
+  // select can report a range it has no option for instead of showing a bound
+  // that is no longer true.
+  control.preset.value = (preset && !range.minSet) ? preset.value : "custom";
+}
+
+function refreshRangeDisplay(kind) {
+  const control = RANGE_CONTROLS[kind];
+  const range = readRange(kind);
+  const fill = document.querySelector(`[data-range-fill="${kind}"]`);
+  const span = control.ceiling - control.floor;
+
+  control.label.textContent = kind === "time"
+    ? describeTimeRange(range)
+    : describeWeightRange(range);
+
+  if (fill) {
+    fill.style.left = `${((range.minIndex - control.floor) / span) * 100}%`;
+    fill.style.right = `${((control.ceiling - range.maxIndex) / span) * 100}%`;
+  }
+
+  // What a screen reader announces on each thumb: the index alone says nothing.
+  control.min.setAttribute("aria-valuetext", control.label.textContent);
+  control.max.setAttribute("aria-valuetext", control.label.textContent);
+}
+
+function describeTimeRange(range) {
+  if (!range.minSet && !range.maxSet) {
+    return "Any length";
+  }
+
+  if (!range.minSet) {
+    return `Up to ${range.max} min`;
+  }
+
+  if (!range.maxSet) {
+    return `${range.min} min or more`;
+  }
+
+  return `Between ${range.min} and ${range.max} min`;
+}
+
+function describeWeightRange(range) {
+  if (!range.minSet && !range.maxSet) {
+    return "Any complexity";
+  }
+
+  // Bands sit between the thumbs, so a range spanning indices 1-3 covers the
+  // two bands named at 1 and 2.
+  const names = [];
+
+  for (let band = range.minIndex; band < range.maxIndex; band += 1) {
+    names.push(WEIGHT_BANDS[band]);
+  }
+
+  if (names.length === 1) {
+    return names[0];
+  }
+
+  if (names.length === 2) {
+    return `${names[0]} or ${names[1].toLowerCase()}`;
+  }
+
+  return `${names[0]} to ${names[names.length - 1].toLowerCase()}`;
+}
+
+function initRangeControls() {
+  for (const kind of Object.keys(RANGE_CONTROLS)) {
+    // The selects carry the defaults, so the sliders start from them rather
+    // than from a second copy that could drift.
+    applyRangePreset(kind, RANGE_CONTROLS[kind].preset.value);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Theme and mechanic picker
+//
+// Two filters, one component. A <select> cannot carry 191 mechanics or express
+// "any of these", and a phone has no room for 191 checkboxes inline, so this is
+// a searchable sheet: frequency-ordered, multi-select, and led by the values the
+// games currently on screen actually carry.
+// ---------------------------------------------------------------------------
+
+function openFilterPicker(kind) {
+  const picker = FILTER_PICKERS[kind];
+
+  if (!picker) {
+    console.warn(`Unknown filter picker: ${kind}`);
+    return;
+  }
+
+  // Only matters on a cold open before startup finished; the list re-renders
+  // itself when it lands, so the sheet is never left empty waiting on it.
+  ensureFilterVocabularyLoaded().then(() => {
+    if (activeFilterPicker === kind) {
+      renderFilterPickerList();
+    }
+  });
+
+  activeFilterPicker = kind;
+  filterPickerReturnFocus = picker.button;
+  filterPickerTitle.textContent = picker.title;
+  filterPickerSearch.placeholder = picker.searchPlaceholder;
+  filterPickerSearch.value = "";
+  filterPickerOverlay.hidden = false;
+  picker.button.setAttribute("aria-expanded", "true");
+  document.body.classList.add("filterPickerOpen");
+  renderFilterPickerChips();
+  renderFilterPickerList();
+  // Not focusing the search field: on a phone that raises the keyboard over the
+  // list, and the top of the list is usually the answer.
+  window.setTimeout(() => filterPickerCloseButton.focus(), 0);
+}
+
+function closeFilterPicker() {
+  if (!activeFilterPicker) {
+    return;
+  }
+
+  FILTER_PICKERS[activeFilterPicker].button.setAttribute("aria-expanded", "false");
+  activeFilterPicker = "";
+  filterPickerOverlay.hidden = true;
+  document.body.classList.remove("filterPickerOpen");
+  filterPickerList.replaceChildren();
+  filterPickerReturnFocus?.focus();
+  filterPickerReturnFocus = null;
+}
+
+function clearActiveFilterPicker() {
+  if (!activeFilterPicker) {
+    return;
+  }
+
+  selectedFilterValues[activeFilterPicker].clear();
+  renderFilterPickerChips();
+  renderFilterPickerList();
+  applyFilterValueChange();
+}
+
+// Selections take effect as they are made rather than on Done, so closing the
+// sheet never has a pending edit to lose.
+function applyFilterValueChange() {
+  refreshFilterPickerButtons();
+  handleFilterChange();
+}
+
+function toggleFilterValue(kind, name, selected) {
+  const values = selectedFilterValues[kind];
+
+  if (selected) {
+    values.add(name);
+  } else {
+    values.delete(name);
+  }
+
+  renderFilterPickerChips();
+  syncFilterPickerOptionState();
+  applyFilterValueChange();
+}
+
+// The values carried by the games currently on screen. Everything else in the
+// vocabulary can only ever remove cards, so these lead the list -- and it is
+// also how a value the bundled vocabulary never saw (an obscure game's theme)
+// still becomes selectable.
+function filterValuesOnScreen(field) {
+  const values = new Set();
+
+  for (const card of currentResultCards) {
+    const entries = card.details?.[field];
+
+    if (!Array.isArray(entries)) {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const name = String(entry || "").trim();
+
+      if (name) {
+        values.add(name);
+      }
+    }
+  }
+
+  return values;
+}
+
+function buildFilterPickerEntries(kind, query) {
+  const picker = FILTER_PICKERS[kind];
+  const selected = selectedFilterValues[kind];
+  const onScreen = filterValuesOnScreen(picker.detailField);
+  const counts = new Map(filterVocabulary[kind].map((entry) => [entry.name, entry.games]));
+  const names = new Set([...counts.keys(), ...onScreen, ...selected]);
+  const needle = normalizeGameLookupText(query);
+  const entries = [...names]
+    .filter((name) => !needle || normalizeGameLookupText(name).includes(needle))
+    .map((name) => ({
+      name,
+      games: counts.get(name) || 0,
+      onScreen: onScreen.has(name),
+      selected: selected.has(name),
+    }))
+    // Frequency order, and deliberately not "selected first": re-sorting on
+    // every tap would slide the next row under the finger that just tapped.
+    .sort((left, right) => right.games - left.games || left.name.localeCompare(right.name));
+
+  return {
+    onScreen: entries.filter((entry) => entry.onScreen),
+    rest: entries.filter((entry) => !entry.onScreen),
+  };
+}
+
+function renderFilterPickerList() {
+  if (!activeFilterPicker) {
+    return;
+  }
+
+  const picker = FILTER_PICKERS[activeFilterPicker];
+  const { onScreen, rest } = buildFilterPickerEntries(activeFilterPicker, filterPickerSearch.value);
+
+  filterPickerList.replaceChildren();
+
+  if (!onScreen.length && !rest.length) {
+    const empty = document.createElement("p");
+
+    empty.className = "filterPickerEmpty";
+    empty.textContent = filterPickerSearch.value.trim()
+      ? `No ${picker.plural} match "${filterPickerSearch.value.trim()}".`
+      : `No ${picker.plural} loaded yet.`;
+    filterPickerList.append(empty);
+    updateFilterPickerSummary();
+    return;
+  }
+
+  if (onScreen.length) {
+    filterPickerList.append(
+      filterPickerHeading("In this photo"),
+      ...onScreen.map((entry) => filterPickerOption(activeFilterPicker, entry)),
+    );
+  }
+
+  if (rest.length) {
+    filterPickerList.append(
+      filterPickerHeading(onScreen.length ? picker.allHeading : ""),
+      ...rest.map((entry) => filterPickerOption(activeFilterPicker, entry)),
+    );
+  }
+
+  updateFilterPickerSummary();
+}
+
+function filterPickerHeading(text) {
+  const heading = document.createElement("p");
+
+  heading.className = "filterPickerHeading";
+  heading.textContent = text;
+  heading.hidden = !text;
+  return heading;
+}
+
+function filterPickerOption(kind, entry) {
+  const option = document.createElement("label");
+  const input = document.createElement("input");
+  const name = document.createElement("span");
+  const count = document.createElement("span");
+
+  option.className = "filterPickerOption";
+  option.dataset.value = entry.name;
+  option.classList.toggle("isSelected", entry.selected);
+  input.type = "checkbox";
+  input.checked = entry.selected;
+  input.addEventListener("change", () => {
+    option.classList.toggle("isSelected", input.checked);
+    toggleFilterValue(kind, entry.name, input.checked);
+  });
+  name.className = "filterPickerOptionName";
+  name.textContent = entry.name;
+  count.className = "filterPickerOptionCount";
+  // A value no game in the catalog carries still gets a row when a game on
+  // screen has it, and saying "0 games" there would be a lie about the catalog
+  // rather than a useful number.
+  count.textContent = entry.games ? String(entry.games) : "";
+  option.append(input, name, count);
+  return option;
+}
+
+// Checkbox state after a chip removal, without rebuilding the list -- rebuilding
+// would scroll it back to the top mid-edit.
+function syncFilterPickerOptionState() {
+  if (!activeFilterPicker) {
+    return;
+  }
+
+  const selected = selectedFilterValues[activeFilterPicker];
+
+  for (const option of filterPickerList.querySelectorAll(".filterPickerOption")) {
+    const checked = selected.has(option.dataset.value);
+
+    option.querySelector("input").checked = checked;
+    option.classList.toggle("isSelected", checked);
+  }
+
+  updateFilterPickerSummary();
+}
+
+function renderFilterPickerChips() {
+  if (!activeFilterPicker) {
+    return;
+  }
+
+  const kind = activeFilterPicker;
+  const values = [...selectedFilterValues[kind]];
+
+  filterPickerChips.replaceChildren();
+  filterPickerChips.hidden = !values.length;
+
+  for (const value of values) {
+    const chip = document.createElement("button");
+
+    chip.type = "button";
+    chip.className = "filterPickerChip";
+    chip.textContent = value;
+    chip.setAttribute("aria-label", `Remove ${value}`);
+    chip.addEventListener("click", () => toggleFilterValue(kind, value, false));
+    filterPickerChips.append(chip);
+  }
+
+  updateFilterPickerSummary();
+}
+
+function updateFilterPickerSummary() {
+  if (!activeFilterPicker) {
+    return;
+  }
+
+  const picker = FILTER_PICKERS[activeFilterPicker];
+  const count = selectedFilterValues[activeFilterPicker].size;
+
+  filterPickerSummary.textContent = count
+    ? `${count} selected · a game needs any one`
+    : `Any ${picker.singular}`;
+  filterPickerClearButton.disabled = !count;
+}
+
+function refreshFilterPickerButtons() {
+  for (const [kind, picker] of Object.entries(FILTER_PICKERS)) {
+    const values = [...selectedFilterValues[kind]];
+
+    picker.button.textContent = values.length === 0
+      ? "Any"
+      : (values.length === 1 ? values[0] : `${values.length} selected`);
+    picker.button.title = values.length ? values.join(", ") : `Any ${picker.singular}`;
+    picker.button.classList.toggle("isSet", values.length > 0);
+  }
+}
+
+// Ten advanced filters do not fit on screen collapsed, so the toggle carries how
+// many are set. Without it, a card can silently fail a filter the user set once
+// and cannot see.
+function refreshAdvancedFilterSummary() {
+  const filters = getFilters();
+  const count = [
+    filters.minRating,
+    filters.maxRank,
+    filters.gameType,
+    filters.youngestAge,
+    filters.bestPlayerCountOnly,
+    filters.categories.length,
+    filters.mechanics.length,
+    // Only the lower bounds: the upper ones have a control in the basic panel
+    // and are visible without opening this one.
+    filters.time.minSet,
+    filters.weight.minSet,
+  ].filter(Boolean).length;
+
+  advancedFilterToggle.textContent = count ? `Advanced · ${count}` : "Advanced";
+  advancedFilterToggle.classList.toggle("isSet", count > 0);
+}
+
 function handleFilterChange() {
   for (const card of currentResultCards) {
     card.applyFilters();
   }
 
   refreshResultCards();
-
+  refreshAdvancedFilterSummary();
 }
 
 function refreshResultCards() {
@@ -5396,31 +6028,38 @@ function getFilters() {
   // Only meaningful alongside a player count -- on its own there is no count
   // to be best at.
   const bestPlayerCountOnly = Boolean(players) && bestPlayerCountFilter.checked;
-  const maxTime = cleanNumber(timeFilter.value);
-  const maxWeight = cleanNumber(complexityFilter.value) || 5;
-  const complexityLabel = complexityFilter.selectedOptions[0]?.textContent || "Any";
+  const time = readRange("time");
+  const weight = readRange("weight");
   const minRating = cleanNumber(minRatingFilter.value);
   const maxRank = cleanNumber(maxRankFilter.value);
   const gameType = gameTypeFilter.value;
-  const expansionMode = expansionFilter.value;
-  const minYear = cleanNumber(minYearFilter.value);
+  // The age of the youngest player, so it caps the game's recommended age
+  // rather than setting a floor -- "we have an 8-year-old" wants games rated 8
+  // and under, not games rated 8 and over.
+  const youngestAge = cleanNumber(youngestAgeFilter.value);
+  const categories = [...selectedFilterValues.categories];
+  const mechanics = [...selectedFilterValues.mechanics];
+  // A lower bound on either range is only reachable from the advanced panel, so
+  // it counts as advanced even though the upper bound has a basic control.
   const hasAdvanced = Boolean(
-    minRating || maxRank || gameType || expansionMode || minYear || bestPlayerCountOnly,
+    minRating || maxRank || gameType || bestPlayerCountOnly || youngestAge
+    || categories.length || mechanics.length
+    || time.minSet || weight.minSet,
   );
 
   return {
     players,
     bestPlayerCountOnly,
-    maxTime,
-    maxWeight,
-    complexityLabel,
+    time,
+    weight,
     minRating,
     maxRank,
     gameType,
-    expansionMode,
-    minYear,
+    youngestAge,
+    categories,
+    mechanics,
     hasAdvanced,
-    hasAny: Boolean(players || maxTime || maxWeight < 5 || hasAdvanced),
+    hasAny: Boolean(players || time.set || weight.set || hasAdvanced),
   };
 }
 
@@ -5578,8 +6217,8 @@ function gameFitsFilters(details, filters) {
     }
   }
 
-  if (filters.maxTime) {
-    const timeResult = checkMaxTime(details, filters.maxTime);
+  if (filters.time.set) {
+    const timeResult = checkTimeRange(details, filters.time);
     checks.time = timeResult.fits ? "pass" : "fail";
 
     if (!timeResult.fits) {
@@ -5587,12 +6226,12 @@ function gameFitsFilters(details, filters) {
     }
   }
 
-  if (filters.maxWeight < 5) {
-    const complexityResult = checkComplexity(details, filters.maxWeight, filters.complexityLabel);
-    checks.weight = complexityResult.fits ? "pass" : "fail";
+  if (filters.weight.set) {
+    const weightResult = checkWeightRange(details, filters.weight);
+    checks.weight = weightResult.fits ? "pass" : "fail";
 
-    if (!complexityResult.fits) {
-      reasons.push(complexityResult.reason);
+    if (!weightResult.fits) {
+      reasons.push(weightResult.reason);
     }
   }
 
@@ -5620,19 +6259,33 @@ function gameFitsFilters(details, filters) {
     }
   }
 
-  if (filters.expansionMode) {
-    const expansionResult = checkExpansionMode(details, filters.expansionMode);
+  if (filters.categories.length) {
+    const categoryResult = checkValueList(details, "categories", filters.categories, {
+      singular: "theme",
+      plural: "themes",
+    });
 
-    if (!expansionResult.fits) {
-      reasons.push(expansionResult.reason);
+    if (!categoryResult.fits) {
+      reasons.push(categoryResult.reason);
     }
   }
 
-  if (filters.minYear) {
-    const yearResult = checkMinYear(details, filters.minYear);
+  if (filters.mechanics.length) {
+    const mechanicResult = checkValueList(details, "mechanics", filters.mechanics, {
+      singular: "mechanic",
+      plural: "mechanics",
+    });
 
-    if (!yearResult.fits) {
-      reasons.push(yearResult.reason);
+    if (!mechanicResult.fits) {
+      reasons.push(mechanicResult.reason);
+    }
+  }
+
+  if (filters.youngestAge) {
+    const ageResult = checkPlayerAge(details, filters.youngestAge);
+
+    if (!ageResult.fits) {
+      reasons.push(ageResult.reason);
     }
   }
 
@@ -5741,30 +6394,43 @@ function formatExpansionShortName(expansion, details) {
   return fullName;
 }
 
-function checkMaxTime(details, maxTime) {
+// Both bounds read the game's longest play, which is what the max-only filter
+// always used. The lower bound then means "will not be over before then" --
+// a game that can run 45 minutes can fill a 30-minute slot.
+function checkTimeRange(details, range) {
   const duration = cleanNumber(details.max_playtime || details.playing_time);
 
   if (!duration) {
     return { fits: false, reason: "No time data" };
   }
 
-  return {
-    fits: duration <= maxTime,
-    reason: duration <= maxTime ? "" : `Over ${maxTime} min`,
-  };
+  if (range.minSet && duration < range.min) {
+    return { fits: false, reason: `Under ${range.min} min` };
+  }
+
+  if (range.maxSet && duration > range.max) {
+    return { fits: false, reason: `Over ${range.max} min` };
+  }
+
+  return { fits: true, reason: "" };
 }
 
-function checkComplexity(details, maxWeight, complexityLabel) {
+function checkWeightRange(details, range) {
   const weight = cleanNumber(details.average_weight);
 
   if (!weight) {
     return { fits: false, reason: "No weight data" };
   }
 
-  return {
-    fits: weight <= maxWeight,
-    reason: weight <= maxWeight ? "" : `Above ${complexityLabel.toLowerCase()}`,
-  };
+  if (range.minSet && weight < range.min) {
+    return { fits: false, reason: `Lighter than ${WEIGHT_BANDS[range.min]?.toLowerCase()}` };
+  }
+
+  if (range.maxSet && weight > range.max) {
+    return { fits: false, reason: `Heavier than ${WEIGHT_BANDS[range.max - 1]?.toLowerCase()}` };
+  }
+
+  return { fits: true, reason: "" };
 }
 
 function checkMinRating(details, minRating) {
@@ -5808,38 +6474,57 @@ function checkGameType(details, gameType) {
   };
 }
 
-function checkExpansionMode(details, mode) {
-  const isExpansion = details.is_expansion === true;
+// Themes and mechanics are lists on both sides, and selecting several asks for
+// ANY of them, not all. The AND reading empties the strip almost every time --
+// "Fantasy and Economic" is a handful of games in the whole catalog, and the
+// user picking both is saying "either of these appeals tonight".
+function checkValueList(details, field, wanted, { singular, plural }) {
+  const values = Array.isArray(details[field]) ? details[field] : [];
 
-  if (mode === "base") {
-    return {
-      fits: !isExpansion,
-      reason: isExpansion ? "Expansion" : "",
-    };
+  if (!values.length) {
+    return { fits: false, reason: `No ${singular} data` };
   }
 
-  if (mode === "expansion") {
-    return {
-      fits: isExpansion,
-      reason: isExpansion ? "" : "Not an expansion",
-    };
-  }
+  const present = new Set(values.map((value) => String(value).toLowerCase()));
+  const hit = wanted.find((value) => present.has(String(value).toLowerCase()));
 
-  return { fits: true, reason: "" };
-}
-
-function checkMinYear(details, minYear) {
-  const year = cleanNumber(details.year_published);
-
-  if (!year) {
-    return { fits: false, reason: "No year data" };
+  if (hit) {
+    return { fits: true, reason: "" };
   }
 
   return {
-    fits: year >= minYear,
-    reason: year >= minYear ? "" : `Before ${minYear}`,
+    fits: false,
+    reason: wanted.length === 1 ? `Not ${wanted[0].toLowerCase()}` : `No ${plural} match`,
   };
 }
+
+// BGG carries two ages: the publisher's box age (min_age) and what the community
+// voted (suggested_player_age). The vote wins where it exists -- publishers
+// routinely state an age the table disagrees with -- with the box age as the
+// fallback, since the poll is missing for ~31% of obscure games.
+function checkPlayerAge(details, youngestAge) {
+  const age = cleanNumber(details.suggested_player_age) || cleanNumber(details.min_age);
+
+  if (!age) {
+    return { fits: false, reason: "No age data" };
+  }
+
+  return {
+    fits: age <= youngestAge,
+    reason: age <= youngestAge ? "" : `Ages ${age}+`,
+  };
+}
+
+// BGG's language-dependence poll, 1 (no text) to 5 (unplayable translated).
+// Phrased as a fact about the game rather than about the filter, so a failing
+// card says what it is instead of what it missed.
+const LANGUAGE_LEVEL_LABELS = {
+  1: "No text",
+  2: "Little text",
+  3: "Some text",
+  4: "Lots of text",
+  5: "Text-heavy",
+};
 
 // Players, time and weight: the three the filters act on, and the three the
 // compact tile has room for. Kept in sync with the CSS that hides the rest.
@@ -5874,6 +6559,14 @@ function renderGameDetails(container, matches, detailsRecord = null) {
     ["rating", "Rating", formatRating(details.average_rating)],
     ["type", "Type", formatGameTypeTags(details.game_type_tags)],
     ["year", "Year", formatYear(details.year_published)],
+    // The fields the advanced filters act on, so a verdict like "Not fantasy"
+    // can be checked against what the game actually carries. Language is here
+    // without a filter behind it: nothing else on the card says whether a
+    // non-English table can play the thing.
+    ["age", "Age", formatPlayerAge(details)],
+    ["language", "Language", formatLanguageDependence(details.language_dependence)],
+    ["themes", "Themes", formatTagList(details.categories)],
+    ["mechanics", "Mechanics", formatTagList(details.mechanics)],
   ].filter(([field, , value]) => value || TRIAGE_DETAIL_FIELDS.has(field));
 
   for (const [field, label, value] of rows) {
@@ -6047,6 +6740,34 @@ function formatYear(value) {
   const year = cleanNumber(value);
 
   return year ? String(year) : "";
+}
+
+// Themes and mechanics run to a dozen entries on a heavy game. Three plus a
+// count says what kind of game it is without turning the card into a list.
+function formatTagList(values, limit = 3) {
+  const tags = (Array.isArray(values) ? values : [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  if (!tags.length) {
+    return "";
+  }
+
+  const shown = tags.slice(0, limit).join(", ");
+
+  return tags.length > limit ? `${shown} +${tags.length - limit}` : shown;
+}
+
+function formatPlayerAge(details) {
+  const age = cleanNumber(details.suggested_player_age) || cleanNumber(details.min_age);
+
+  return age ? `${age}+` : "";
+}
+
+function formatLanguageDependence(dependence) {
+  const level = cleanNumber(dependence?.level);
+
+  return level ? (LANGUAGE_LEVEL_LABELS[level] || "") : "";
 }
 
 function cleanNumber(value) {
@@ -6452,7 +7173,8 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     // Name the game on a box that matched. A bare detector score is the least
     // useful thing to show once we know what the box actually is. Greyed-out
     // boxes keep the score so they stay visually quiet.
-    if (fits && matchInfo && matchInfo.name) {
+    const named = Boolean(fits && matchInfo && matchInfo.name);
+    if (named) {
       rawLabel = matchInfo.name;
     }
 
@@ -6509,7 +7231,19 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     // detector's box-confidence, which says nothing about which game it is --
     // the most prominent number on a dimmed box would mean nothing to a player.
     // The outline alone already reads as "found something, not for you".
-    const quietState = matchState === "no"
+    // Outside box editing a box is labelled with a game name or with nothing at
+    // all. The only other text available is the detector's box-confidence --
+    // the noise B2 removed from greyed boxes, which was still reaching the
+    // player by two other routes: every box while the matcher was still
+    // working, and every box in a scan where nothing fits (the `anyFits` reset
+    // above rewrites those states to null before they can be checked here).
+    // Naming the condition rather than the states closes both at once.
+    // DINO and manual boxes keep their labels -- those name what the box is
+    // rather than scoring what it might be, and they only appear for a
+    // contributor who asked for them.
+    const unnamedScore = !named && !detection.dino && !detection.manual;
+    const quietState = unnamedScore
+      || matchState === "no"
       || matchState === "rejected"
       || matchState === "unknown";
 
@@ -6641,14 +7375,17 @@ function cssValue(styles, name, fallback) {
   return styles.getPropertyValue(name).trim() || fallback;
 }
 
-function showResultShell(count) {
+function showResultShell() {
   // The matches strip is permanent while results exist. The photo is resized to
   // sit above it rather than behind it, so nothing needs to be dismissed to see
   // the picture.
   resultsPanel.hidden = false;
   showMatchesButton.hidden = true;
   document.body.classList.add("hasResults");
-  resultCount.textContent = `${count}`;
+  // The strip opens before a single crop has been matched, so the only honest
+  // thing it can say is that it is working. It used to open on a bare box count
+  // sitting where the verdict goes, which reads as a verdict.
+  resultCount.textContent = "Loading...";
   setResultsNotice("");
   // The photo box just changed size, so the overlay has to be remeasured.
   requestAnimationFrame(redrawActiveDetections);
@@ -6698,10 +7435,27 @@ function sortCards() {
   resultsGrid.replaceChildren(...cards);
 }
 
+// Cards still waiting on the matcher. A card that failed outright is not
+// pending -- it has its answer, and the answer is that there isn't one.
+function pendingResultCards() {
+  return currentResultCards.filter(
+    (card) => !card.matches.length && !card.matchFailed,
+  ).length;
+}
+
 function updateResultStats() {
   refreshBestPlayerCountAvailability();
 
   if (!currentResultCards.length) {
+    return;
+  }
+
+  // Cards are matched one request at a time, so a count published mid-scan
+  // starts at zero and climbs. "0 of 5 fit your filters" is a statement about
+  // the filters, and while the matcher is still working it is not a true one --
+  // the boxes are simply not answered for yet.
+  if (pendingResultCards()) {
+    resultCount.textContent = "Loading...";
     return;
   }
 
@@ -6728,11 +7482,7 @@ function filterOutcomeSummary() {
     return "";
   }
 
-  const pending = currentResultCards.filter(
-    (card) => !card.matches.length && !card.matchFailed,
-  ).length;
-
-  if (pending) {
+  if (pendingResultCards()) {
     return "";
   }
 
@@ -6903,8 +7653,10 @@ function setControlsEnabled(enabled) {
   minRatingFilter.disabled = !enabled;
   maxRankFilter.disabled = !enabled;
   gameTypeFilter.disabled = !enabled;
-  expansionFilter.disabled = !enabled;
-  minYearFilter.disabled = !enabled;
+  youngestAgeFilter.disabled = !enabled;
+  for (const input of [timeRangeMin, timeRangeMax, weightRangeMin, weightRangeMax]) {
+    input.disabled = !enabled;
+  }
 }
 
 function isCameraFrameFrozen() {

@@ -18,8 +18,15 @@ Current bundle:
   `data/game_details_obscure.json` if you build it locally (not in the repo --
   see below)
 - Conditional player-count expansion support from `data/player_expansion_index.json`
-- Player count, duration, and complexity filters
-- CSV-backed rank, rating, expansion, and game-type tags for advanced filters
+- Player count, duration, and complexity filters. Duration and complexity are
+  ranges: the select in the basic panel sets the upper end, the slider in the
+  advanced panel sets both ("between 30 and 60 min", "light or medium")
+- CSV-backed rank, rating, and game-type tags for advanced filters
+- Theme and mechanic pickers, plus a youngest-player age filter, reading BGG
+  fields from `data/game_details.json`. The picker menus are built from
+  `data/filter_vocabulary.json` — the distinct categories and mechanics with
+  per-value game counts — so they open without scanning the catalog, and lead
+  with the values the games on screen carry
 - Optional contributor mode when connected to a GameMatch backend
 - YOLO, backend health, and game metadata begin loading as soon as the app opens
 
@@ -99,6 +106,10 @@ When you collect better user references locally, rebuild the backend user-refere
 If you refresh the game metadata for the browser filters/details, replace:
 
 - `data/game_details.json`
+- `data/filter_vocabulary.json` — written by the same build (`--vocabulary-output`).
+  It is only the theme and mechanic menus; a stale copy shows stale counts and
+  misses new values, and a missing one falls the pickers back to whatever the
+  games on screen carry
 - `data/game_details_obscure.json` — **untracked.** 33.7 MB of single-line JSON
   that git cannot delta, so every refresh added a permanent blob to history.
   Build it locally and let the backend serve it; the catalog rebuild endpoint
