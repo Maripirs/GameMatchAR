@@ -101,6 +101,8 @@ const resultsGrid = document.getElementById("resultsGrid");
 const resultCount = document.getElementById("resultCount");
 const backendWarning = document.getElementById("backendWarning");
 const resultsNotice = document.getElementById("resultsNotice");
+const overlayHint = document.getElementById("overlayHint");
+const overlayHintDismiss = document.getElementById("overlayHintDismiss");
 const showMatchesButton = document.getElementById("showMatchesButton");
 const infoButton = document.getElementById("infoButton");
 const infoPanel = document.getElementById("infoPanel");
@@ -292,6 +294,50 @@ backToCameraButton.addEventListener("click", backToLiveCamera);
 closeScanButton.addEventListener("click", closeActiveScan);
 backButton.addEventListener("click", closeActiveScan);
 missingBoxesButton.addEventListener("click", beginManualBoxMode);
+overlayHintDismiss?.addEventListener("click", dismissOverlayHint);
+
+// The long-tail advanced filters, folded away until asked for. They still
+// announce themselves when set, so a filter can never be quietly narrowing the
+// results from behind a collapsed section.
+const advancedExtraToggle = document.getElementById("advancedExtraToggle");
+const advancedExtraFilters = document.getElementById("advancedExtraFilters");
+
+function activeExtraFilterCount() {
+  if (!advancedExtraFilters) {
+    return 0;
+  }
+  return [...advancedExtraFilters.querySelectorAll("select")]
+    .filter((control) => control.value !== "").length
+    + [...advancedExtraFilters.querySelectorAll("input[type=checkbox]")]
+      .filter((control) => control.checked).length;
+}
+
+function refreshAdvancedExtraToggle() {
+  if (!advancedExtraToggle || !advancedExtraFilters) {
+    return;
+  }
+  const open = !advancedExtraFilters.hidden;
+  const active = activeExtraFilterCount();
+  advancedExtraToggle.setAttribute("aria-expanded", String(open));
+  advancedExtraToggle.textContent = active
+    ? `More filters · ${active} on`
+    : "More filters";
+  advancedExtraToggle.classList.toggle("hasActive", active > 0);
+}
+
+advancedExtraToggle?.addEventListener("click", () => {
+  if (!advancedExtraFilters) {
+    return;
+  }
+  advancedExtraFilters.hidden = !advancedExtraFilters.hidden;
+  refreshAdvancedExtraToggle();
+});
+
+// A collapsed section must never hide an active filter, so opening it is forced
+// whenever one of its controls is set -- including by a restored URL or state.
+advancedExtraFilters?.addEventListener("change", () => {
+  refreshAdvancedExtraToggle();
+});
 modifyBoxesButton.addEventListener("click", beginManualBoxMode);
 finishModifyingButton.addEventListener("click", endManualBoxMode);
 exitModifierButton.addEventListener("click", endManualBoxMode);
@@ -2013,10 +2059,29 @@ function createMatchCard(cropCanvas, detection, index) {
   expandButton.setAttribute("aria-expanded", "false");
   // Directly under the details it disputes, so it reads as a footnote to the
   // facts above it rather than as another action competing with them.
-  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, reportWrongButton, findGameButton, feedbackActions, correctionPanel, expandButton);
+  // The tile's two actions share a row rather than being an inline link and an
+  // absolutely-positioned one. Both need a 44px hit area; as separate children
+  // that meant two invisible pseudo-element pads overlapping each other and the
+  // card's own click target. One row, sized once, is easier to reason about.
+  const cardActions = document.createElement("div");
+  cardActions.className = "cardActions";
+  cardActions.append(reportWrongButton, expandButton);
+  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, findGameButton, feedbackActions, correctionPanel, cardActions);
   card.append(dismissButton, cropCanvas, body);
   card.tabIndex = 0;
-  card.setAttribute("aria-label", `Highlight box ${index + 1} in the photo`);
+  // Lead with the game, fall back to the position. A screen reader announcing
+  // "Highlight box 3 in the photo" told a player where a card was and never
+  // what it was -- and the name is the only part they came for. The box number
+  // stays on the end because tapping a card still flashes that box.
+  const describeCard = (gameName) => {
+    card.setAttribute(
+      "aria-label",
+      gameName
+        ? `${gameName} — box ${index + 1} in the photo`
+        : `Box ${index + 1} in the photo, still matching`,
+    );
+  };
+  describeCard("");
   resultsGrid.append(card);
 
   const cardApi = {
@@ -2081,6 +2146,7 @@ function createMatchCard(cropCanvas, detection, index) {
 
       if (!best) {
         name.textContent = "No match";
+        describeCard("No match");
         meta.textContent = "";
         matchDiagnostic.textContent = "";
         score.textContent = "";
@@ -2095,6 +2161,7 @@ function createMatchCard(cropCanvas, detection, index) {
       }
 
       name.textContent = best.name;
+      describeCard(best.name);
       meta.textContent = `BGG ${best.id}`;
       matchDiagnostic.textContent = `Match source: ${formatMatchSource(best)}`;
       score.textContent = formatMatchScoreText(best);
@@ -2127,6 +2194,7 @@ function createMatchCard(cropCanvas, detection, index) {
       rejectedDetections.delete(this.detection);
       this.details = gameDetailsById.get(Number(game.id)) || null;
       name.textContent = game.name;
+      describeCard(game.name);
       meta.textContent = `BGG ${game.id} · corrected`;
       matchDiagnostic.textContent = "Match source: contributor correction";
       score.textContent = "Saved as correct";
@@ -2158,6 +2226,12 @@ function createMatchCard(cropCanvas, detection, index) {
         return;
       }
 
+      // Certainty is worded for players and numeric for contributors, so it has
+      // to be re-rendered when the mode changes under a card that already exists
+      // -- setContributorMode calls this for every card on screen.
+      if (!this.userConfirmed) {
+        score.textContent = formatMatchScoreText(this.matches[0]);
+      }
       renderGameDetails(details, this.matches, this.details);
       this.applyFilters();
     },
@@ -2214,6 +2288,7 @@ function createMatchCard(cropCanvas, detection, index) {
       this.matchFailed = true;
       this.userConfirmed = false;
       name.textContent = text;
+      describeCard(text);
       meta.textContent = options.meta || "Backend matcher unavailable";
       score.textContent = "";
       fit.className = "filterFit unknown";
@@ -3810,12 +3885,46 @@ async function loginContributor(event) {
   }
 }
 
+// The contributor tools are not part of the app a player is using, so they stay
+// out of the help sheet unless they are wanted: #contributor in the URL, or an
+// existing login to restore. Bookmarkable, and one line to check.
+const contributorArea = document.getElementById("contributorArea");
+
+function revealContributorArea() {
+  if (contributorArea) {
+    contributorArea.hidden = false;
+  }
+}
+
+function contributorAreaRequested() {
+  try {
+    return window.location.hash.toLowerCase() === "#contributor";
+  } catch (error) {
+    return false;
+  }
+}
+
+if (contributorAreaRequested()) {
+  revealContributorArea();
+}
+
+window.addEventListener("hashchange", () => {
+  if (contributorAreaRequested()) {
+    revealContributorArea();
+    infoPanel?.removeAttribute("hidden");
+  }
+});
+
 async function restoreStoredContributorLogin() {
   const password = loadStoredContributorPassword();
 
   if (!password) {
     return;
   }
+
+  // Someone with a saved login is a contributor whether or not they used the
+  // hash, so give them their tools back.
+  revealContributorArea();
 
   const nextApiBase = configuredApiBase();
   contributorStatus.textContent = "Restoring contributor mode...";
@@ -6618,20 +6727,38 @@ function isConfidentMatch(matches) {
   return scoreAtLeast(score, requiredScore) && scoreAtLeast(margin, DETAIL_MARGIN_THRESHOLD);
 }
 
+// Two numbers a player cannot act on. `Similarity 0.982 · confidence 0.912`
+// reads as a score *for the game* -- 0.9 out of 1 for a game they were about to
+// play -- rather than as the matcher's own certainty about which box this is.
+// Players get the certainty in words; contributors, who are grading matches and
+// need to compare them, keep the figures. Same call site, audience decides.
 function formatMatchScoreText(match) {
-  if (match?.visual_score_available === false) {
-    return `Confidence ${matchSortScore(match).toFixed(SCORE_DISPLAY_DECIMALS)}`;
-  }
-  const similarity = cleanNumber(match?.score);
   const confidence = matchSortScore(match);
-  const roundedSimilarity = similarity.toFixed(SCORE_DISPLAY_DECIMALS);
-  const roundedConfidence = confidence.toFixed(SCORE_DISPLAY_DECIMALS);
 
-  if (roundedSimilarity !== roundedConfidence) {
-    return `Similarity ${roundedSimilarity} · confidence ${roundedConfidence}`;
+  if (contributorMode) {
+    if (match?.visual_score_available === false) {
+      return `Confidence ${confidence.toFixed(SCORE_DISPLAY_DECIMALS)}`;
+    }
+    const roundedSimilarity = cleanNumber(match?.score).toFixed(SCORE_DISPLAY_DECIMALS);
+    const roundedConfidence = confidence.toFixed(SCORE_DISPLAY_DECIMALS);
+    return roundedSimilarity !== roundedConfidence
+      ? `Similarity ${roundedSimilarity} · confidence ${roundedConfidence}`
+      : `Similarity ${roundedSimilarity}`;
   }
 
-  return `Similarity ${roundedSimilarity}`;
+  return matchCertaintyPhrase(confidence);
+}
+
+// Bands rather than a number, worded so the weakest one invites a correction
+// instead of asserting something the matcher is not sure of.
+function matchCertaintyPhrase(confidence) {
+  if (confidence >= 0.9) {
+    return "Confident match";
+  }
+  if (confidence >= 0.8) {
+    return "Likely match";
+  }
+  return "Best guess — check the cover";
 }
 
 function displayedMatchScore(match) {
@@ -6784,15 +6911,38 @@ function matchSortScore(match) {
 // affordance to advertise it. Hint once, then never again.
 const BOX_TAP_HINT_KEY = "gamematchBoxTapHintSeen";
 
-function boxTapHintSuffix() {
+function boxTapHintSeen() {
   try {
-    if (localStorage.getItem(BOX_TAP_HINT_KEY)) {
-      return "";
-    }
+    return Boolean(localStorage.getItem(BOX_TAP_HINT_KEY));
   } catch (error) {
-    return "";
+    // A private-mode browser just means the hint shows again; not worth failing.
+    return false;
   }
-  return " Tap a box for details.";
+}
+
+// The hint this replaces was a string appended to a status line, and both the
+// function producing it and the summary it was appended to had become
+// unreachable -- so the flag was being set on first tap while nothing was ever
+// shown. The legend lives here now as well, since the outline colours are the
+// one thing a player cannot work out by looking.
+function showOverlayHintOnce() {
+  if (!overlayHint || boxTapHintSeen() || contributorMode) {
+    return;
+  }
+  overlayHint.hidden = false;
+  document.body.classList.add("hasOverlayHint");
+  redrawActiveDetections();
+}
+
+function dismissOverlayHint() {
+  if (!overlayHint || overlayHint.hidden) {
+    return;
+  }
+  overlayHint.hidden = true;
+  document.body.classList.remove("hasOverlayHint");
+  markBoxTapHintSeen();
+  // The photo area just changed size, so the overlay has to be re-fitted to it.
+  redrawActiveDetections();
 }
 
 function markBoxTapHintSeen() {
@@ -6953,6 +7103,9 @@ function handleDetectionTap(event) {
     return;
   }
 
+  // Tapping a box is the thing the hint was advertising, so doing it retires
+  // the hint -- both the flag and whatever is still on screen.
+  dismissOverlayHint();
   markBoxTapHintSeen();
   openMatchesForCard(cardApi);
 }
@@ -7097,6 +7250,17 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
   ctx.lineJoin = "round";
   ctx.font = "800 13px system-ui, sans-serif";
   ctx.textBaseline = "middle";
+
+  // Every box in screen space, up front, so label placement can treat them as
+  // obstacles. The draw loop computes these one at a time, which is too late --
+  // a label is placed before the boxes below it have been measured.
+  const boxRects = detections.map((entry) => ({
+    detection: entry,
+    x: entry.x * scale + offsetX,
+    y: entry.y * scale + offsetY,
+    width: entry.width * scale,
+    height: entry.height * scale,
+  }));
 
   for (const detection of detections) {
     const selected = detection === selectedDetection;
@@ -7281,29 +7445,67 @@ function drawDetections(detections, sourceCanvas, displayElement, selectedDetect
     const labelMinY = Math.max(0, photoTop);
     const maxLabelX = Math.max(labelMinX, Math.min(displayWidth, photoRight) - labelWidth);
     const maxLabelY = Math.max(labelMinY, Math.min(displayHeight, photoBottom) - labelHeight);
-    const labelX = Math.min(Math.max(labelMinX, x), maxLabelX);
-    const preferredLabelY = y - labelHeight - 5;
-    let labelY = Math.min(
-      Math.max(labelMinY, preferredLabelY >= labelMinY ? preferredLabelY : y + 5),
-      maxLabelY,
+    // Labels used to avoid each other and nothing else, which on a stack of
+    // boxes lying shoulder to shoulder meant every label cleared its neighbours
+    // and then sat squarely on the next box's cover art -- "Verdant" over
+    // Santorini, "Juicy Fruits" over Clank!. That defeats the reason the
+    // highlight is unfilled in the first place: the art it is being checked
+    // against has to stay visible. Boxes are obstacles now, not just labels.
+    const clampX = (candidate) => Math.min(Math.max(labelMinX, candidate), maxLabelX);
+    const clampY = (candidate) => Math.min(Math.max(labelMinY, candidate), maxLabelY);
+    const overlap = (ax, ay, bx, by, bw, bh) => {
+      const ox = Math.max(0, Math.min(ax + labelWidth, bx + bw) - Math.max(ax, bx));
+      const oy = Math.max(0, Math.min(ay + labelHeight, by + bh) - Math.max(ay, by));
+      return ox * oy;
+    };
+
+    // Above the box first -- that is where a label belongs when there is room.
+    // The rest are fallbacks in descending order of how well they read.
+    const candidates = [];
+    for (const cx of [
+      clampX(x),
+      clampX(x + width - labelWidth),
+      clampX(x + (width - labelWidth) / 2),
+    ]) {
+      candidates.push(
+        { x: cx, y: clampY(y - labelHeight - 5) },
+        { x: cx, y: clampY(y + height + 5) },
+        { x: cx, y: clampY(y + 4) },
+        { x: cx, y: clampY(y + height - labelHeight - 4) },
+      );
+    }
+
+    // Beside the stack. On a bag or a shelf the boxes pile up vertically with
+    // their bounding rects overlapping each other, so there can be no gap above
+    // or below any of them -- but there is usually clear space to one side, and
+    // a label there covers no art at all.
+    const besideY = clampY(y + (height - labelHeight) / 2);
+    candidates.push(
+      { x: clampX(x - labelWidth - 6), y: besideY },
+      { x: clampX(x + width + 6), y: besideY },
     );
 
-    // Boxes on a shelf sit shoulder to shoulder, so their name labels overlap.
-    // Stack each one clear of those already placed -- upward by preference,
-    // downward once there is no room left above.
-    const collidesWithPlaced = (candidateY) => placedLabels.some((placed) => (
-      labelX < placed.x + placed.width
-      && labelX + labelWidth > placed.x
-      && candidateY < placed.y + labelHeight
-      && candidateY + labelHeight > placed.y
-    ));
-
-    for (let attempt = 0; attempt < 8 && collidesWithPlaced(labelY); attempt += 1) {
-      const lifted = labelY - (labelHeight + 4);
-      labelY = lifted >= labelMinY
-        ? lifted
-        : Math.min(labelY + labelHeight + 4, maxLabelY);
+    let best = null;
+    for (const candidate of candidates) {
+      let cost = 0;
+      for (const placed of placedLabels) {
+        // Two labels on top of each other is the one thing worse than a label
+        // on the art, so this dominates everything else in the score.
+        cost += overlap(candidate.x, candidate.y, placed.x, placed.y, placed.width, labelHeight) * 40;
+      }
+      for (const box of boxRects) {
+        const area = overlap(candidate.x, candidate.y, box.x, box.y, box.width, box.height);
+        // Covering a slice of its own box is a fair price for staying near it;
+        // covering someone else's is the thing being avoided.
+        cost += box.detection === detection ? area * 0.12 : area;
+      }
+      if (!best || cost < best.cost) {
+        best = { ...candidate, cost };
+      }
     }
+
+    const labelX = best.x;
+    const labelY = best.y;
 
     placedLabels.push({ x: labelX, y: labelY, width: labelWidth });
 
@@ -7470,6 +7672,10 @@ function updateResultStats() {
   resultCount.textContent = filters.hasAny
     ? `${matched} of ${currentResultCards.length} fit your filters`
     : `${checked} of ${currentResultCards.length} recognised`;
+
+  // Only once the scan has actually answered: a legend explaining highlighted
+  // versus grey means nothing while every box is still waiting.
+  showOverlayHintOnce();
 }
 
 // The matches panel now stays closed after a scan, so its "2/5 fit" counter is

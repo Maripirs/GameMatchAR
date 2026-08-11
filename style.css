@@ -16,16 +16,23 @@
    Two things worth knowing before editing:
      - `.feedbackActions button` pins height, width and weight for everything in
        that row; overriding it needs at least (0,2,0) specificity.
-     - `.matchCard.rejected` sets opacity on the whole card, which is why the
-       expanded state has to reset it.
+     - `.matchCard.rejected` dims its border, background and thumbnail, never
+       its text. It used to set opacity on the whole card; that took the stat
+       labels below 3:1.
    =========================================================================== */
 
 :root {
   /* Height of the matches strip, and the tile size inside it. The photo
      subtracts this so the two never overlap. */
-  --matches-height: 168px;
+  --matches-height: 220px;
+  /* The one-time legend adds a row above the cards the first time only. */
+  --matches-height-hinted: 286px;
   --match-card-width: 236px;
-  --match-card-height: 112px;
+  /* Grew from 112px to fit two things the tile was too small to say: why a game
+     was excluded, and a 44px action row. The strip grew with it. That costs the
+     photo ~46px on a phone, which is the right trade -- the photo had the room
+     and the tile did not. */
+  --match-card-height: 164px;
   color-scheme: dark;
   --app-bg: #080913;
   --app-text: #f6f3ec;
@@ -64,7 +71,10 @@ html[data-theme="light"] {
   --app-text: #171321;
   --app-text-strong: #0d0b14;
   --app-muted: rgba(23, 19, 33, 0.72);
-  --app-soft: rgba(23, 19, 33, 0.56);
+  /* 0.56 measured 4.14:1 on the light panel -- under the 4.5:1 floor, and it
+     carries the stat labels, the filter labels and the count line, all at
+     11-13px. 0.62 is 5.05:1 and still reads as secondary. */
+  --app-soft: rgba(23, 19, 33, 0.62);
   --app-faint: rgba(42, 44, 92, 0.14);
   --panel-bg: rgba(255, 251, 243, 0.82);
   --panel-bg-strong: rgba(255, 251, 243, 0.94);
@@ -2474,6 +2484,54 @@ body.manualBoxMode #examplePanel {
   font-size: 13px;
 }
 
+/* Sits above the cards rather than over the photo: the photo is what it is
+   describing, so covering it to explain it would be self-defeating. */
+#overlayHint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+#overlayHint[hidden] {
+  display: none;
+}
+
+/* The strip grows while the hint is up so the cards keep their full height --
+   the photo gives up the difference for one scan, then gets it back. Set on
+   body because --matches-height is what the photo subtracts. */
+body.hasOverlayHint {
+  --matches-height: var(--matches-height-hinted);
+}
+
+#overlayHint p {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#overlayHint strong {
+  font-weight: 800;
+}
+
+#overlayHintDismiss {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* Cards scroll sideways in a single row of fixed-size tiles: a vertical list
    of tall cards showed barely one result in the space available. */
 #resultsGrid {
@@ -2714,27 +2772,45 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
 /* Small to look at, big to hit. The visible chip is compact, but ::after
    extends an invisible hit area to roughly a fingertip -- at its original 13px
    it was effectively untappable and sat next to the destructive "No". */
+/* The tile's action row. Both controls are 44px tall because a thumb is 44px
+   wide, not because they need the visual weight -- so the row is transparent,
+   the labels stay 11-12px, and the height is padding. Pushed to the bottom of
+   the body with margin-top:auto so cards line up whatever their name wraps to. */
+.cardActions {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
 .cardExpandButton {
-  position: absolute;
-  right: 8px;
-  bottom: 6px;
-  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 0;
+  border-radius: 8px;
   background: none;
   box-shadow: none;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 400;
+  /* --accent measured 4.45:1 on the card background -- a hair under 4.5. The
+     strong variant is the same hue with the contrast the label needs. */
+  color: var(--accent-strong);
+  font-size: 11.5px;
+  font-weight: 600;
   line-height: 1.2;
-  text-decoration: underline;
   white-space: nowrap;
   cursor: pointer;
 }
 
+.cardExpandButton:active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 /* Must out-specify `.feedbackActions button` (0,1,1), which pins everything in
-   that row to 34px tall and 38px wide -- correct for the OK/X targets, and
-   exactly the bulk that made this read as a button rather than a link. */
+   that row to 34px tall and 38px wide. */
 .matchCard .cardExpandButton {
   /* appearance: none matters -- with appearance: auto the browser can still
      paint native button chrome even though border and background are cleared. */
@@ -2743,34 +2819,21 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
   width: auto;
   height: auto;
   min-width: 0;
-  min-height: 0;
-  padding: 0;
+  min-height: 44px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 0;
+  border-radius: 8px;
   background: none;
   background-color: transparent;
   box-shadow: none;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 400;
-  text-decoration: underline;
+  color: var(--accent-strong);
+  font-size: 11.5px;
+  font-weight: 600;
 }
 
 /* Keyboard focus still gets a ring; a pointer tap does not leave one behind. */
 .matchCard .cardExpandButton:focus:not(:focus-visible) {
   outline: none;
-}
-
-/* Extends upward and sideways only. A symmetric inset pushed past the card's
-   box and counted toward its scroll height, tipping tiles into overflow.
-
-   Anchored to the button, which the rule above positions. Anywhere the button
-   is not positioned this resolves against .matchCard instead and becomes a
-   full-card invisible overlay -- see the expanded rule near the bottom. */
-.cardExpandButton::after {
-  position: absolute;
-  inset: -12px -9px -2px;
-  content: "";
 }
 
 /* Offered wherever there is more to show, to everyone. It used to wait until
@@ -2788,34 +2851,22 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
 /* The player's one correction: a quiet red line under the facts it disputes,
    present on the tile itself rather than hidden behind See more. */
 .cardReportWrongButton {
-  position: relative;
-  display: block;
-  justify-self: start;
-  align-self: start;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
   width: auto;
-  margin-top: 4px;
-  padding: 0;
+  min-height: 44px;
+  padding: 0 10px 0 0;
   border: 0;
   background: none;
   color: var(--danger);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 400;
   line-height: 1.2;
   text-align: left;
   text-decoration: underline;
+  white-space: nowrap;
   cursor: pointer;
-}
-
-/* Same trick as .cardExpandButton: an 11px underlined line is the right visual
-   weight for a quiet correction, and a 13px-tall tap target is the wrong hit
-   area for one. Extends up and sideways only -- a symmetric inset pushes past
-   the card box and tips the tile into overflow. `position: relative` above is
-   load-bearing: without it this anchors to .matchCard and becomes a full-card
-   invisible overlay that swallows taps meant for the card. */
-.cardReportWrongButton::after {
-  position: absolute;
-  inset: -13px -10px -4px;
-  content: "";
 }
 
 .matchCard.isExpanded .cardReportWrongButton {
@@ -2893,9 +2944,9 @@ body.contributorMode .cardReportWrongButton {
   padding: 12px;
   border: 1px solid var(--panel-border);
   /* Fully opaque: --panel-bg-strong is translucent and the photo read straight
-     through it. The .rejected tile dimming (opacity: 0.7) is undone too -- it is
-     right for a de-emphasised tile in the strip and wrong for a reading
-     surface, where it washes out the text and lets the photo bleed through. */
+     through it. (This also used to undo the .rejected tile's whole-card
+     opacity; that dimming is gone, but an expanded card is a reading surface
+     either way, so the reset stays as a guard.) */
   opacity: 1;
   background: var(--app-bg);
   box-shadow: var(--panel-shadow);
@@ -3051,19 +3102,13 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchBody {
 /* relative, not static: static took the button out of the positioned chain, so
    the ::after tap pad resolved against the card and covered it entirely --
    every tap on the correction field, "Show in picture" or "Wrong game?" landed
-   on See more and collapsed the card. Expanded there is room for a real target,
-   so the pad is dropped rather than re-anchored. */
+   on See more and collapsed the card. Both controls are real 44px boxes now and
+   the pads are gone, so that whole class of bug is designed out rather than
+   patched around. */
 .matchCard.isExpanded .cardExpandButton {
-  position: relative;
-  right: auto;
-  bottom: auto;
   justify-self: end;
   margin-top: 6px;
-  padding: 4px 2px;
-}
-
-.matchCard.isExpanded .cardExpandButton::after {
-  content: none;
+  padding: 0 10px;
 }
 
 /* A narrower thumbnail than the vertical layout used: the facts matter more
@@ -3132,12 +3177,37 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchBody {
   display: none;
 }
 
-/* The verdict badge is redundant on the tile: the box on the photo already
-   carries it -- highlighted for a fit, greyed when filtered out or uncertain --
-   and the status line gives the count. The className still drives that
-   styling; only the text is dropped. */
+/* The verdict badge was hidden on the tile because the box on the photo already
+   carries it. That held while the answer was binary and the card was 112px --
+   but "filtered out" was then conveyed by opacity alone, which says nothing to
+   a screen reader, little at low vision, and never says *which* filter it
+   missed. The tile has the room now, and "Over 30 min" is a more useful
+   sentence than a shade of grey. A card that fits still says nothing: the
+   absence is the verdict, and the badge would be noise on every passing card. */
 .matchCard .filterFit {
   display: none;
+}
+
+/* A plain line, not a pill. The pill styling is for "Good at 2" -- a badge
+   earned -- and inheriting it here cost 8px of padding the tile did not have,
+   and made an exclusion look like a commendation. */
+.matchCard.rejected .filterFit,
+.matchCard.conditional .filterFit {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--app-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
 }
 
 /* The other exception: expanded, the verdict earns its line. The tile hides it
@@ -3304,8 +3374,18 @@ body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchBody {
     0 16px 38px color-mix(in srgb, var(--blue) 22%, transparent);
 }
 
+/* Was `opacity: 0.7` on the whole card. That dimmed the text along with
+   everything else: stats already sat at 4.1:1 and this pushed them to 2.8:1, so
+   the cards hardest to read were the ones whose reason you most needed to read.
+   Dim the surfaces instead -- and the tile now states the reason in words, so
+   the distinction no longer rests on a shade of grey at all. */
 .matchCard.rejected {
-  opacity: 0.7;
+  border-color: color-mix(in srgb, var(--panel-border) 70%, transparent);
+  background: color-mix(in srgb, var(--app-bg) 32%, transparent);
+}
+
+.matchCard.rejected .matchCropCanvas {
+  opacity: 0.62;
 }
 
 .matchCard.isDismissing {
@@ -3792,14 +3872,111 @@ body.contributorMode .paligemmaHint:not([hidden]) {
 
 /* Wide screens have room for the photo and a full-height column side by side,
    so the sheet gives way to the original layout. */
-/* A wide viewport used to float the strip at the top right, but the base rule
-   still set `bottom: 0` and a fixed height -- so the panel became a 390px box
-   pinned over the photo, its cards clipped under the filter bar, showing a
-   thumbnail and the Yes/No row and nothing else. The bottom strip is the
-   layout that works; a laptop simply gets a wider one. A real two-column
-   desktop treatment is B3 work, not a media query. */
+/* ===========================================================================
+   Laptop and up: photo left, results right.
+
+   A phone gets a bottom strip because a phone has no width to spare. A laptop
+   has width and no height to spare -- a horizontal strip there wastes the whole
+   right-hand side and shows two and a half cards. Turning the strip 90 degrees
+   is most of the work: same cards, same order, stacked instead of scrolled
+   sideways, and all of them visible at once.
+
+   This also makes "Show in picture" close to redundant, which was the point of
+   the B3 item: a highlighted box and its card are on screen together.
+   =========================================================================== */
 @media (min-width: 1100px) {
-  #resultsPanel {
-    padding-inline: max(12px, calc((100vw - 1180px) / 2));
+  :root {
+    --results-column: 392px;
   }
+
+  /* The photo gives up width instead of height, so it keeps the full column
+     below the chrome. --matches-height is a phone concept up here.
+
+     An explicit width, for the same reason the base rule sets an explicit
+     height: these are replaced elements, and `width: auto` on a canvas resolves
+     to its intrinsic pixel width, not to the left/right constraints. That put
+     the overlay canvas at 1058px against a 888px photo area and slid every box
+     to the right of the game it was outlining. */
+  body.hasResults:not(.manualBoxMode) #camera,
+  body.hasResults:not(.manualBoxMode) #photoPreview,
+  body.hasResults:not(.manualBoxMode) #boxes {
+    width: calc(100vw - var(--results-column));
+    height: calc(100% - var(--topchrome-height, 0px));
+  }
+
+  /* The hint is a phone-sized compromise; on a laptop the column has room for
+     it without taking anything from the photo. */
+  body.hasOverlayHint {
+    --matches-height: var(--matches-height-phone, 220px);
+  }
+
+  #resultsPanel {
+    top: var(--topchrome-height, 0px);
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: var(--results-column);
+    height: auto;
+    padding: 12px;
+    border-top: 0;
+    border-left: 1px solid var(--panel-border);
+    overflow: hidden;
+  }
+
+  /* Cards stack and the column scrolls, rather than the row scrolling sideways
+     past the edge of the window. */
+  #resultsGrid {
+    flex-direction: column;
+    align-items: stretch;
+    height: calc(100% - 34px);
+    padding-right: 4px;
+    padding-bottom: 12px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  #resultsGrid > .matchCard {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
+  /* Expanded, a card can simply be taller -- there is no strip height to fight
+     over, so it does not need to become an overlay. */
+  #resultsGrid > .matchCard.isExpanded {
+    position: static;
+    width: 100%;
+    max-height: none;
+  }
+}
+
+
+/* The "More filters" disclosure in the advanced panel. Quiet by default, and
+   it states a count when something inside it is on, so a collapsed section can
+   never be silently narrowing the results. */
+#advancedExtraToggle {
+  grid-column: 1 / -1;
+  justify-self: start;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#advancedExtraToggle.hasActive {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-strong);
+}
+
+#advancedExtraFilters {
+  display: contents;
+}
+
+#advancedExtraFilters[hidden] {
+  display: none;
 }

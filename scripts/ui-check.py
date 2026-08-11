@@ -297,6 +297,18 @@ def scan(page, example="game-bag"):
     raise AssertionError("scan never completed")
 
 
+def open_more_filters(page):
+    """Unfold the advanced panel's long-tail filters.
+
+    Rating, rank, type and youngest-age sit behind a "More filters" disclosure,
+    so a check that drives them has to open it first -- exactly as a player
+    would. Idempotent, so callers need not track the state.
+    """
+    if page.eval_on_selector("#advancedExtraFilters", "e => e.hidden"):
+        page.eval_on_selector("#advancedExtraToggle", "e => e.click()")
+        page.wait_for_timeout(120)
+
+
 def shown_display(page, selector):
     return page.eval_on_selector(selector, "e => getComputedStyle(e).display")
 
@@ -498,9 +510,14 @@ def run(headed):
         weak_page.wait_for_timeout(1200)
         scan(weak_page)
         weak_page.wait_for_timeout(800)
+        # Used to assert the raw "0.41". A player is now told the certainty in
+        # words -- 0.41 read as a score for the game rather than the matcher's
+        # confidence about which game it is -- so the weakest band is what
+        # proves the fixture is weak. The figures still exist for contributors;
+        # the contributor section below checks that.
         c.check(
-            "the fixtures really are unconfident",
-            "0.41" in weak_page.inner_text("#resultsGrid .matchCard .matchScore"),
+            "an unconfident match says so in words, not in a number",
+            "Best guess" in weak_page.inner_text("#resultsGrid .matchCard .matchScore"),
             f'(score "{weak_page.inner_text("#resultsGrid .matchCard .matchScore")}")',
         )
         weak = weak_page.inner_text("#resultsGrid .matchCard")
@@ -1020,6 +1037,7 @@ def run(headed):
 
         # Youngest player: caps the game's recommended age rather than setting a
         # floor. Reading it the other way round would keep the 14+ games.
+        open_more_filters(ap)
         ap.select_option("#youngestAgeFilter", "8")
         ap.wait_for_timeout(500)
         c.check(
@@ -1288,8 +1306,14 @@ def run(headed):
         # panel -- on the one control a player uses to report a bad match.
         contrast = tp.evaluate(
             """() => {
-              const parse = c => { const m = c.match(/[\\d.]+/g).map(Number);
-                                   return m.length === 4 ? m : [...m, 1]; };
+              // color-mix() computes to `color(srgb 0.24 0.38 1 / 0.62)`, whose
+              // channels are 0-1, not 0-255. Reading them as 0-255 makes every
+              // mixed background look nearly black and invents failures.
+              const parse = c => {
+                const m = (c.match(/[-\\d.]+(?:e[-+]?\\d+)?/g) || []).map(Number);
+                const [r, g, b, a = 1] = m;
+                return /^color\\(/.test(c) ? [r*255, g*255, b*255, a] : [r, g, b, a];
+              };
               const over = (f, b) => [0,1,2].map(i => f[i]*f[3] + b[i]*(1-f[3]));
               const lum = ([r,g,b]) => { const f = v => { v /= 255;
                   return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); };
@@ -1300,17 +1324,40 @@ def run(headed):
                 let base = [255, 255, 255];
                 for (let i = stack.length - 1; i >= 0; i--) base = over(stack[i], base);
                 return base; };
-              const el = document.querySelector('.cardReportWrongButton');
-              const back = bg(el.parentElement);
-              const fore = over(parse(getComputedStyle(el).color), back);
-              const [a, b] = [lum(fore), lum(back)];
-              return (Math.max(a,b) + 0.05) / (Math.min(a,b) + 0.05);
+              const ratio = (fg, back) => { const [a, b] = [lum(fg), lum(back)];
+                return (Math.max(a,b) + 0.05) / (Math.min(a,b) + 0.05); };
+              // Every visible run of text, not one nominated control. Checking
+              // only "Wrong game?" would have missed "See more" sitting at
+              // 4.45:1 two rules further down the same file.
+              const fails = []; const seen = new Set();
+              document.querySelectorAll('*').forEach(el => {
+                if (el.children.length) return;
+                const text = (el.textContent || '').trim();
+                if (!text || text.length > 40) return;
+                const cs = getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                const size = parseFloat(cs.fontSize);
+                if (r.width < 2 || r.height < 2) return;
+                if (cs.visibility === 'hidden' || +cs.opacity === 0 || size < 1) return;
+                const fg = parse(cs.color);
+                if (fg[3] === 0) return;
+                const large = size >= 24 || (size >= 18.66 && +cs.fontWeight >= 700);
+                const back = bg(el.parentElement || el);
+                const cr = ratio(over(fg, back), back);
+                const need = large ? 3 : 4.5;
+                const key = text + cs.color;
+                if (cr < need && !seen.has(key)) {
+                  seen.add(key);
+                  fails.push(text.slice(0, 24) + ' ' + cr.toFixed(2) + ':1');
+                }
+              });
+              return fails;
             }"""
         )
         c.check(
-            "Wrong game? is readable in the light theme",
-            contrast >= 4.5,
-            f"({contrast:.2f}:1)",
+            "every visible label clears its contrast floor (light)",
+            not contrast,
+            f"({'; '.join(contrast[:4])})" if contrast else "",
         )
 
         # Measured by hit-testing rather than by box, since several of these
@@ -1364,27 +1411,132 @@ def run(headed):
         wp.goto(f"{base}/", wait_until="networkidle", timeout=60000)
         scan(wp)
 
-        # A media query pinned the strip top-right at phone width while the base
-        # rule still set bottom: 0 and a fixed height, so it became a 390px box
-        # floating over the photo with its cards clipped under the filter bar.
+        # A laptop gets the results as a right-hand column beside the photo
+        # rather than a strip beneath it. Before that, a media query pinned the
+        # strip top-right at phone width while the base rule still set
+        # bottom: 0 and a fixed height, so it became a 390px box floating over
+        # the photo with its cards clipped under the filter bar.
         panel = rect(wp, "#resultsPanel")
         card = rect(wp, "#resultsGrid .matchCard")
+        photo = rect(wp, "#photoPreview")
+        boxes = rect(wp, "#boxes")
         c.check(
-            "the strip spans the window instead of floating over the photo",
-            panel["left"] == 0 and panel["width"] == 1200,
+            "results are a column down the right-hand side",
+            panel["right"] == 1200 and panel["bottom"] == 900 and panel["width"] < 500,
             f"({panel})",
         )
         c.check(
-            "and sits at the bottom of it",
-            panel["bottom"] >= 890,
-            f"(bottom {panel['bottom']})",
+            "and the photo takes the rest of the width, not overlapping it",
+            photo["right"] <= panel["left"],
+            f"(photo right {photo['right']}, panel left {panel['left']})",
+        )
+        # `width: auto` on a canvas resolves to its intrinsic pixel width, not
+        # to the left/right constraints -- which put the overlay at 1058px over
+        # an 888px photo and slid every box off the game it was outlining. The
+        # two must agree exactly or the overlay is a lie.
+        c.check(
+            "the overlay canvas is exactly as wide as the photo it annotates",
+            boxes["width"] == photo["width"],
+            f"(boxes {boxes['width']}, photo {photo['width']})",
         )
         c.check(
-            "so no card is clipped by the chrome above it",
+            "cards fill the column rather than scrolling off the side",
+            card["width"] > 300 and card["right"] <= panel["right"],
+            f"(card {card})",
+        )
+        c.check(
+            "no card is clipped by the chrome above it",
             card["top"] > panel["top"],
             f"(card {card['top']}, panel {panel['top']})",
         )
         wp.close()
+
+        print("\nsaying it rather than shading it")
+        sp = context.new_page()
+        sp.on("pageerror", lambda e: errors.append(str(e)))
+        stub_backend(sp)
+        sp.add_init_script(
+            "try { localStorage.removeItem('gamematchForceContributor');"
+            " localStorage.removeItem('gamematch-contributor-password'); } catch (e) {}"
+        )
+        sp.goto(f"{base}/", wait_until="networkidle", timeout=60000)
+        scan(sp)
+
+        # Filtered-out used to be conveyed by opacity alone: nothing in the
+        # accessibility tree, nothing at low vision, and never *which* filter it
+        # missed. The reason was computed all along and hidden on the tile.
+        c.check(
+            "a filtered-out tile says why, without being expanded",
+            sp.evaluate(
+                """() => {
+                  const card = document.querySelector('#resultsGrid .matchCard.rejected');
+                  if (!card) return false;
+                  const fit = card.querySelector('.filterFit');
+                  return Boolean(fit) && getComputedStyle(fit).display !== 'none'
+                    && fit.textContent.trim().length > 0;
+                }"""
+            ),
+        )
+        # A screen reader announced where a card was and never what it was.
+        c.check(
+            "a card is named by its game, not by its position",
+            sp.evaluate(
+                """() => {
+                  const card = document.querySelector('#resultsGrid .matchCard');
+                  const name = card.querySelector('.matchName').textContent.trim();
+                  return name.length > 0
+                    && (card.getAttribute('aria-label') || '').startsWith(name);
+                }"""
+            ),
+            f"(aria {sp.eval_on_selector('#resultsGrid .matchCard', 'e => e.ariaLabel')!r})",
+        )
+        # The legend for the outline colours lived only in the info sheet,
+        # behind a 34px "i". The hint that was meant to teach the tap gesture
+        # had become unreachable code that set its own "seen" flag.
+        c.check(
+            "first results explain the outlines and the tap",
+            not sp.eval_on_selector("#overlayHint", "e => e.hidden"),
+        )
+        c.check(
+            "and dismissing it is remembered",
+            sp.evaluate(
+                """() => { document.querySelector('#overlayHintDismiss').click();
+                     return document.querySelector('#overlayHint').hidden
+                       && Boolean(localStorage.getItem('gamematchBoxTapHintSeen')); }"""
+            ),
+        )
+        # A player cannot act on 0.982, and it reads as a score for the game.
+        c.check(
+            "certainty is worded, with no bare numbers left on the card",
+            not sp.evaluate(
+                """() => /Similarity|confidence \\d|0\\.\\d\\d/.test(
+                     document.querySelector('#resultsGrid').innerText)"""
+            ),
+        )
+        # A collapsed section must never quietly narrow the results.
+        c.check(
+            "the More filters fold announces how many are on",
+            sp.evaluate(
+                """() => {
+                  const toggle = document.querySelector('#advancedExtraToggle');
+                  if (!toggle) return false;
+                  const before = toggle.textContent.trim();
+                  document.querySelector('#minRatingFilter').value = '7';
+                  document.querySelector('#minRatingFilter')
+                    .dispatchEvent(new Event('change', {bubbles: true}));
+                  return before === 'More filters'
+                    && /\\b1 on\\b/.test(toggle.textContent);
+                }"""
+            ),
+            f"(toggle {sp.eval_on_selector('#advancedExtraToggle', 'e => e.textContent.trim()')!r})",
+        )
+        # The help sheet is for players; a password field in it reads as
+        # something the reader is supposed to have.
+        c.check(
+            "contributor sign-in is not shown to players",
+            sp.eval_on_selector("#contributorArea", "e => e.hidden"),
+        )
+        sp.close()
 
         print("\nconsole")
         c.check("no page errors", not errors, f"({errors[:2]})")

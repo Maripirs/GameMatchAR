@@ -4,13 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#080b0d" />
-  <title>GameMatch</title>
+  <title>GameMatch — point your camera at a shelf, find a game to play</title>
+  <!-- The title and description are the whole preview when this gets passed
+       around, which is how it is meant to spread. "GameMatch" alone said
+       nothing about what it does. -->
+  <meta name="description" content="Scan a shelf of board games with your phone. GameMatch identifies the boxes and shows which ones fit your players, time and complexity." />
+  <meta property="og:title" content="GameMatch" />
+  <meta property="og:description" content="Scan a shelf of board games and see which ones fit tonight's table." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
   <!-- Inline rather than a .ico file: this is a static Pages deploy, every
        request costs a round trip, and the browser asks for /favicon.ico on
        every single load whether or not one exists -- it was a guaranteed 404
        per visit. -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%233e63ff%27/%3E%3Ccircle cx=%2711%27 cy=%2711%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2721%27 cy=%2721%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2721%27 cy=%2711%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2711%27 cy=%2721%27 r=%272.6%27 fill=%27white%27/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="style.css?v=20260810-ui4" />
+  <link rel="stylesheet" href="style.css?v=20260810-ui5" />
 </head>
 <body>
   <main id="stage" aria-label="GameMatch">
@@ -69,7 +77,12 @@
             <button class="themeOptionButton" type="button" data-theme-option="dark" role="radio" aria-checked="false">Dark</button>
           </div>
         </section>
-        <section id="contributorArea" aria-label="Contributor tools">
+        <!-- Hidden from players. This sheet is the app's help, and a password
+             field sitting under "How GameMatch Works" reads as something the
+             reader is supposed to have. Revealed by the #contributor hash, or
+             automatically for anyone already signed in -- see
+             revealContributorArea in app.js. -->
+        <section id="contributorArea" aria-label="Contributor tools" hidden>
           <div id="contributorTabs" role="tablist" aria-label="Contributor sections" hidden>
             <button class="contributorTabButton" type="button" role="tab" data-contributor-tab="mode" aria-selected="true">Mode</button>
             <button class="contributorTabButton" type="button" role="tab" data-contributor-tab="latest" aria-selected="false">Latest Images</button>
@@ -203,6 +216,15 @@
             <button id="mechanicFilterButton" class="filterPickerButton" type="button" aria-haspopup="dialog" aria-expanded="false">Any</button>
           </div>
         </div>
+        <!-- Advanced used to open on six controls all reading "Any": a wall of
+             empty state where nothing indicates which are worth touching. The
+             ranges and the two pickers above are what people actually reach
+             for; these four are the long tail, so they wait to be asked for and
+             announce how many are active when they are not. -->
+        <button id="advancedExtraToggle" type="button" aria-expanded="false" aria-controls="advancedExtraFilters">
+          More filters
+        </button>
+        <div id="advancedExtraFilters" hidden>
         <label>
           <span>Rating</span>
           <select id="minRatingFilter">
@@ -247,8 +269,12 @@
             <option value="14">14</option>
           </select>
         </label>
+        </div>
         <!-- Shown only once some game on screen carries BGG's player poll;
-             see refreshBestPlayerCountAvailability in app.js. -->
+             see refreshBestPlayerCountAvailability in app.js. Deliberately
+             outside the "More filters" fold: it already appears only when it
+             applies, so hiding a contextual control behind a disclosure would
+             be two layers of the same idea. -->
         <label id="bestPlayerCountField" class="filterToggle" hidden>
           <input id="bestPlayerCountFilter" type="checkbox" />
           <span>Best at this count only</span>
@@ -334,6 +360,18 @@
         <button id="missingBoxesButton" type="button">Missing a game?</button>
       </div>
       <div id="resultsNotice" class="resultsNotice" hidden></div>
+      <!-- Shown once, on a player's first set of results. The outline colours
+           are the app's whole visual language and were explained only inside
+           the info sheet, behind a 34px "i" that most people never open. The
+           tap affordance has the same problem: a canvas advertises nothing. -->
+      <div id="overlayHint" hidden>
+        <p>
+          <strong>Highlighted</strong> boxes fit your filters, grey ones do not,
+          and a dashed outline means the match was uncertain.
+          <strong>Tap a box</strong> for its card.
+        </p>
+        <button id="overlayHintDismiss" type="button">Got it</button>
+      </div>
       <div id="resultsGrid"></div>
     </section>
     <button id="showMatchesButton" type="button" hidden>Matches</button>
@@ -387,6 +425,6 @@
       window.GAMEMATCH_API_BASE = base;
     }
   </script>
-  <script type="module" src="app.js?v=20260810-ui4"></script>
+  <script type="module" src="app.js?v=20260810-ui5"></script>
 </body>
 </html>
