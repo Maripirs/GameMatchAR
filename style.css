@@ -2815,7 +2815,16 @@ body:not(.contributorMode) #resultsGrid > .matchCard:not(.isExpanded) .cardDismi
 /* Wide screens have room for the photo and a full-height column side by side,
    so the sheet gives way to the original layout. */
 /* ===========================================================================
-   Laptop and up: photo left, results right.
+   Wider than a phone: photo left, results right.
+
+   The threshold was 1100px, which left everything from ~700 to 1100 -- a
+   half-screen desktop window, a tablet in landscape -- on the phone layout,
+   which is the worst possible combination. The bottom strip takes 220px of
+   height, so a landscape window ends up with a wide, short photo area; a
+   portrait photo letterboxed into that collapses into a narrow column with
+   huge empty bars either side. Measured at 785x875: the photo drew 375px wide
+   inside a 785px box, filling 48% of its own area, while the fixed-size canvas
+   labels stayed put and swamped it.
 
    A phone gets a bottom strip because a phone has no width to spare. A laptop
    has width and no height to spare -- a horizontal strip there wastes the whole
@@ -2826,9 +2835,13 @@ body:not(.contributorMode) #resultsGrid > .matchCard:not(.isExpanded) .cardDismi
    This also makes "Show in picture" close to redundant, which was the point of
    the B3 item: a highlighted box and its card are on screen together.
    =========================================================================== */
-@media (min-width: 1100px) {
+@media (min-width: 760px) {
   :root {
-    --results-column: 392px;
+    /* Narrower on a half-screen window so the photo is not starved, full width
+       once there is room. At 785px the column takes 320 and the photo keeps
+       465 -- against 375 under the old bottom-strip fallback, with 410px of it
+       wasted as empty letterbox either side. */
+    --results-column: clamp(320px, 40vw, 392px);
   }
 
   /* The photo gives up width instead of height, so it keeps the full column

@@ -1474,6 +1474,42 @@ def run(headed):
         )
         wp.close()
 
+        # A browser window on half a desktop screen. This sat between the phone
+        # breakpoint and the two-column one, so it got the phone layout in a
+        # landscape window: the bottom strip took 220px of height, the photo box
+        # went wide and short, and a portrait photo letterboxed into it drew
+        # 375px wide inside 785px -- 48% of its own area, with the fixed-size
+        # canvas labels swamping what was left.
+        hp = context.new_page()
+        hp.on("pageerror", lambda e: errors.append(str(e)))
+        hp.set_viewport_size({"width": 785, "height": 875})
+        stub_backend(hp)
+        hp.goto(f"{base}/", wait_until="networkidle", timeout=60000)
+        scan(hp)
+        fill = hp.evaluate(
+            """() => {
+              const box = document.querySelector('#photoPreview').getBoundingClientRect();
+              const cv = document.querySelector('#photoPreview');
+              const boxAR = box.width / box.height, imgAR = cv.width / cv.height;
+              const w = boxAR > imgAR ? box.height * imgAR : box.width;
+              const h = boxAR > imgAR ? box.height : box.width / imgAR;
+              return Math.round((w * h) / (box.width * box.height) * 100);
+            }"""
+        )
+        c.check(
+            "a half-screen window does not starve the photo",
+            fill >= 75,
+            f"(photo fills {fill}% of its box; was 48% on the phone fallback)",
+        )
+        c.check(
+            "and gets the two-column layout, not the bottom strip",
+            rect(hp, "#resultsPanel")["bottom"] == 875
+            and rect(hp, "#resultsPanel")["right"] == 785
+            and rect(hp, "#resultsPanel")["width"] < 400,
+            f"({rect(hp, '#resultsPanel')})",
+        )
+        hp.close()
+
         print("\nsaying it rather than shading it")
         sp = context.new_page()
         sp.on("pageerror", lambda e: errors.append(str(e)))
