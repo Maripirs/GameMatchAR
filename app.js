@@ -173,6 +173,18 @@ let detectionPulseFrame = 0;
 const rejectedDetections = new Set();
 let selectedMatchCard = null;
 let contributorMode = false;
+// Declared up here with the rest of the module state, not beside the function
+// that uses it. `let` has a temporal dead zone, and the force-contributor path
+// near the top of this file calls ensureContributorStylesheet() long before a
+// declaration further down would have run -- which threw "Cannot access
+// 'contributorStylesheetPromise' before initialization" and took the whole
+// module down with it.
+let contributorStylesheetPromise = null;
+
+// Read off this module's own URL, so the contributor stylesheet is busted by
+// the same version string as everything else without anyone having to update a
+// second copy of it.
+const ASSET_VERSION = new URL(import.meta.url).searchParams.get("v") || "";
 let contributorRole = "";
 let contributorPassword = "";
 let contributorApiBase = configuredApiBase();
@@ -736,6 +748,33 @@ async function processImageCanvas(sourceCanvas, displayElement) {
   } finally {
     setControlsEnabled(true);
   }
+}
+
+// The contributor and detector styles are ~21KB that a player never sees, so
+// they are a separate stylesheet fetched the first time contributor mode turns
+// on. Awaited rather than fired and forgotten: the UI it styles is revealed
+// immediately afterwards, and an unstyled contributor panel flashing up is
+// worse than a few hundred milliseconds of nothing.
+function ensureContributorStylesheet() {
+  if (contributorStylesheetPromise) {
+    return contributorStylesheetPromise;
+  }
+
+  contributorStylesheetPromise = new Promise((resolve) => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = ASSET_VERSION ? `contributor.css?v=${ASSET_VERSION}` : "contributor.css";
+    // Resolve either way. A contributor with an unstyled panel can still work;
+    // one stuck behind a hung request cannot.
+    link.addEventListener("load", resolve, { once: true });
+    link.addEventListener("error", () => {
+      console.warn("Contributor stylesheet failed to load; the UI will be unstyled.");
+      resolve();
+    }, { once: true });
+    document.head.append(link);
+  });
+
+  return contributorStylesheetPromise;
 }
 
 // Grounding DINO is a transformer running on the backend host, which makes an
@@ -3906,7 +3945,11 @@ async function loginContributor(event) {
 // existing login to restore. Bookmarkable, and one line to check.
 const contributorArea = document.getElementById("contributorArea");
 
-function revealContributorArea() {
+async function revealContributorArea() {
+  // Await the stylesheet: this is the moment the panel becomes visible, and an
+  // unstyled password form appearing inside the help sheet looks broken.
+  await ensureContributorStylesheet();
+
   if (contributorArea) {
     contributorArea.hidden = false;
   }
@@ -3997,6 +4040,13 @@ function logoutContributor() {
 }
 
 function setContributorMode(enabled) {
+  if (enabled) {
+    // Not awaited: this is called from several places, some synchronous, and
+    // the styles land on their own. Every path that actually *reveals* the
+    // panel awaits it -- see revealContributorArea.
+    ensureContributorStylesheet();
+  }
+
   contributorMode = enabled;
   document.body.classList.toggle("contributorMode", contributorMode);
   contributorModeState.textContent = contributorMode

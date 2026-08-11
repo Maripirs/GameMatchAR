@@ -8,3 +8,7 @@ __pycache__/
 # with the backend down, obscure matches lose their details and nothing else
 # breaks. The core tier stays tracked so the app still works offline.
 data/game_details_obscure.json
+
+# Computed-style baselines from scripts/style-snapshot.py. Regenerated on
+# demand and specific to one machine's font rendering, so not shared.
+.style-snapshots/

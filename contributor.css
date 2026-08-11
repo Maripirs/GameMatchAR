@@ -1,0 +1,1029 @@
+/* ===========================================================================
+   GameMatch -- contributor and detector styles
+
+   Split out of style.css on 2026-08-11: rules only a signed-in contributor ever
+   sees, which every player was downloading on every visit.
+
+   Loaded on demand by ensureContributorStylesheet() in app.js, which awaits it
+   before revealing the contributor UI, so nothing flashes unstyled.
+
+   Two things to know before adding to this file:
+
+   - It loads after style.css, so everything here sits later in the cascade than
+     it would have. That is the safe direction -- these rules were already
+     written as overrides of the player styles on the same elements, which is
+     why so many carry `body.contributorMode` and a specificity of four or more.
+   - A `body:not(.contributorMode)` rule does NOT belong here. Those style the
+     player's view, and a player never loads this file. Putting one here quietly
+     stops it applying: that is how the contributor-only dismiss X started
+     rendering for everybody.
+   =========================================================================== */
+
+body.contributorMode #infoButton {
+  border-color: color-mix(in srgb, var(--success) 65%, transparent);
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+
+#contributorArea {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--app-faint);
+}
+
+#contributorTabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 68%, transparent);
+}
+
+#contributorTabs[hidden] {
+  display: none;
+}
+
+.contributorTabButton {
+  min-width: 0;
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.contributorTabButton:hover,
+.contributorTabButton:focus-visible {
+  color: var(--app-text-strong);
+}
+
+.contributorTabButton:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.contributorTabButton.isSelected,
+.contributorTabButton[aria-selected="true"] {
+  background: var(--primary-gradient);
+  color: #fffaf2;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--purple) 28%, transparent);
+}
+
+#contributorForm {
+  display: grid;
+  gap: 10px;
+}
+
+#contributorForm[hidden],
+#contributorReviewPanel[hidden] {
+  display: none;
+}
+
+#contributorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#contributorModeState {
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+#contributorForm label {
+  display: grid;
+  gap: 5px;
+}
+
+#contributorForm label span {
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1;
+}
+
+#contributorForm input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-size: 16px;
+}
+
+#contributorLoginButton {
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--primary-gradient);
+  color: #fffaf2;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--purple) 34%, transparent);
+}
+
+#contributorStatus {
+  min-height: 16px;
+  margin: 0;
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#contributorReviewPanel {
+  display: grid;
+  gap: 10px;
+}
+
+#contributorReviewHeader,
+#detectorReviewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#contributorReviewHeader > div,
+#detectorReviewHeader > div {
+  display: grid;
+  gap: 3px;
+}
+
+#contributorReviewHeader strong,
+#detectorReviewHeader strong {
+  color: var(--app-text-strong);
+  font-size: 14px;
+  line-height: 1;
+}
+
+#contributorReviewCount {
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1;
+}
+
+#contributorReviewRefreshButton {
+  flex: 0 0 auto;
+}
+
+#contributorReviewRefreshButton:disabled {
+  opacity: 0.52;
+  cursor: default;
+}
+
+#contributorReviewStatus {
+  min-height: 16px;
+  margin: 0;
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#contributorReviewGrid {
+  display: grid;
+  gap: 9px;
+}
+
+.contributorReviewCard {
+  position: relative;
+  display: grid;
+  grid-template-columns: 98px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--card-gradient);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.contributorReviewCard.reviewConfirmed {
+  border-color: color-mix(in srgb, var(--success) 62%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--success) 16%, transparent), color-mix(in srgb, var(--purple) 10%, transparent));
+}
+
+.contributorReviewCard.isDismissing {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.98);
+}
+
+.contributorReviewCard.isFlaggedForReview {
+  border-color: color-mix(in srgb, var(--danger) 68%, var(--panel-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.contributorReviewImage {
+  display: block;
+  width: 98px;
+  height: 98px;
+  border-radius: 6px;
+  background: var(--app-bg);
+  cursor: zoom-in;
+  object-fit: contain;
+}
+
+.contributorReviewImage.loadFailed {
+  border: 1px dashed var(--panel-border);
+}
+
+.contributorReviewBody {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.contributorReviewBody > strong {
+  overflow: hidden;
+  color: var(--app-text-strong);
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contributorReviewMeta,
+.contributorReviewQuality,
+.contributorReviewFeedback,
+.contributorReviewItemStatus {
+  overflow: hidden;
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contributorReviewFeedback {
+  color: var(--accent-strong);
+  font-weight: 760;
+}
+
+.contributorReviewActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 5px;
+  margin-top: 3px;
+}
+
+.contributorReviewActions button,
+.contributorReviewActions a {
+  min-height: 34px;
+  padding: 8px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--app-text-strong);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  text-align: center;
+  text-decoration: none;
+}
+
+.contributorReviewActions button {
+  background: color-mix(in srgb, var(--panel-bg-strong) 76%, transparent);
+  cursor: pointer;
+}
+
+.contributorReviewActions button:first-child {
+  border-color: color-mix(in srgb, var(--success) 42%, transparent);
+  color: var(--success);
+}
+
+.contributorReviewActions button:nth-child(2) {
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+  color: var(--danger);
+}
+
+.contributorReviewActions button:disabled {
+  opacity: 0.52;
+  cursor: default;
+}
+
+.contributorReviewActions a {
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.detectorReviewActions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detectorReviewActions button:first-child {
+  grid-column: 1 / -1;
+}
+
+.detectorBoxLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  color: var(--app-muted);
+  font-size: 11px;
+}
+
+.detectorBoxLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.detectorBoxLegend i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 3px solid;
+  border-radius: 2px;
+}
+
+.detectorKeepColor {
+  border-color: #32d583 !important;
+}
+
+.detectorRemoveColor {
+  border-color: #ff3b30 !important;
+}
+
+.detectorManualColor {
+  border-color: #ffd60a !important;
+}
+
+.detectorReviewEditorOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  background: rgba(4, 5, 12, 0.96);
+}
+
+.detectorReviewEditorWindow {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(1400px, 100%);
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: var(--panel-bg-strong);
+  box-shadow: var(--panel-shadow);
+}
+
+.detectorReviewEditorHeader,
+.detectorReviewEditorToolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.detectorReviewEditorHeader {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.detectorReviewEditorHeader h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.detectorReviewEditorHeader .ghostButton {
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.detectorReviewEditorCanvasWrap {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  place-items: center;
+  padding: 0;
+  background: #090a10;
+}
+
+.detectorReviewEditorCanvasWrap > p {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 20px);
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(5, 6, 12, 0.72);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  line-height: 1.2;
+  backdrop-filter: blur(8px);
+}
+
+.detectorReviewEditorCanvasWrap > p button {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.detectorReviewEditorCanvas {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+  transform:
+    translate(var(--review-pan-x, 0px), var(--review-pan-y, 0px))
+    scale(var(--review-zoom, 1));
+  transform-origin: center;
+  will-change: transform;
+}
+
+.detectorReviewEditorToolbar {
+  flex-wrap: nowrap;
+  border-top: 1px solid var(--panel-border);
+  background: var(--panel-bg-strong);
+}
+
+.detectorReviewEditorToolbar button {
+  min-height: 40px;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.detectorReviewEditorToolbar button:nth-last-of-type(1) {
+  margin-left: auto;
+  border-color: color-mix(in srgb, var(--success) 58%, transparent);
+  background: var(--primary-gradient);
+  color: #fff;
+}
+
+.detectorReviewEditorStatus {
+  overflow: hidden;
+  color: var(--app-muted);
+  font-size: 0.85rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detectorReviewEditorStatus:empty {
+  display: none;
+}@media (max-width: 640px) {
+  .detectorReviewEditorOverlay {
+    padding: 0;
+  }
+
+  .detectorReviewEditorWindow {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .detectorReviewEditorToolbar button {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .detectorReviewEditorStatus {
+    position: absolute;
+    right: 10px;
+    bottom: 58px;
+    left: 10px;
+    z-index: 4;
+    padding: 6px 9px;
+    border-radius: 8px;
+    background: rgba(5, 6, 12, 0.76);
+    color: rgba(255, 255, 255, 0.84);
+    text-align: center;
+    pointer-events: none;
+  }
+
+  .detectorReviewEditorCanvasWrap > p {
+    right: 8px;
+    left: 8px;
+    max-width: none;
+    border-radius: 10px;
+    text-align: center;
+  }}
+
+
+
+#detectorReviewPanel {
+  display: grid;
+  gap: 10px;
+}
+
+#detectorReviewPanel[hidden] {
+  display: none;
+}
+
+#startDetectorTrainingButton {
+  min-height: 46px;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, transparent);
+  border-radius: 8px;
+  background: var(--primary-gradient);
+  color: #fffaf2;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+#startDetectorTrainingButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#detectorReviewGrid,
+#untouchedDetectorGrid {
+  display: grid;
+  gap: 9px;
+}
+
+#untouchedDetectorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+#untouchedDetectorHeader > div {
+  display: grid;
+  gap: 3px;
+}
+
+#untouchedDetectorHeader strong {
+  color: var(--app-text-strong);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.cropViewerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+  place-items: center;
+  background: var(--overlay-bg);
+}
+
+.cropViewerOverlay[hidden] {
+  display: none;
+}
+
+.cropViewerWindow {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(940px, calc(100vw - 28px));
+  height: min(760px, calc(100vh - 28px));
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel-gradient);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+
+.cropViewerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.cropViewerHeader h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--app-text-strong);
+  font-size: 16px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cropViewerToolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.cropViewerToolbar button {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 86%, transparent);
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cropViewerToolbar button:hover,
+.cropViewerToolbar button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  color: var(--app-text-strong);
+  outline: none;
+}
+
+.cropViewerZoomValue {
+  min-width: 46px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  text-align: center;
+}
+
+.cropViewerScroller {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
+  background: color-mix(in srgb, var(--app-bg) 64%, transparent);
+}
+
+.cropViewerCanvas {
+  display: block;
+  max-width: none;
+  max-height: none;
+  border-radius: 6px;
+  background: var(--app-bg);
+  cursor: grab;
+}
+
+.cropViewerCanvas.isDragging {
+  cursor: grabbing;
+}
+
+.contributorReviewActions .contributorReviewUndo {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--accent-strong);
+}
+
+.contributorReviewDismiss {
+  position: absolute;
+  z-index: 2;
+  top: 5px;
+  right: 5px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  color: var(--app-text-strong);
+  background: color-mix(in srgb, var(--panel-bg-strong) 88%, transparent);
+  cursor: pointer;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.contributorReviewDismiss:hover,
+.contributorReviewDismiss:focus-visible {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+
+.correctionPanel {
+  display: none;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 7px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 76%, transparent);
+}
+
+body.contributorMode .correctionPanel.isOpen {
+  display: grid;
+}
+
+.correctionPanel[hidden] {
+  display: none;
+}
+
+.correctionPanel label {
+  display: grid;
+  gap: 3px;
+}
+
+.correctionPanel label span {
+  color: var(--app-soft);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.correctionPanel input {
+  width: 100%;
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  /* 16px exactly: anything smaller makes iOS Safari zoom the page on focus. */
+  font-size: 16px;
+}
+
+.correctionSuggestions {
+  display: grid;
+  gap: 3px;
+}
+
+.correctionSuggestions:empty {
+  display: none;
+}
+
+.correctionCoverPanel {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  gap: 5px 8px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-bg-strong));
+}
+
+.correctionCoverPanel[hidden] {
+  display: none;
+}
+
+.correctionCoverImage {
+  grid-row: 1 / span 2;
+  width: 60px;
+  height: 60px;
+  border-radius: 6px;
+  background: var(--app-bg);
+  object-fit: contain;
+}
+
+.correctionCoverName {
+  color: var(--app-text-strong);
+  font-size: 13.5px;
+  line-height: 1.15;
+}
+
+.correctionCoverQuestion {
+  color: var(--app-muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.correctionCoverActions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.correctionCoverActions button {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  color: var(--app-text-strong);
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.correctionCoverActions button:first-child {
+  border-color: color-mix(in srgb, var(--success) 48%, transparent);
+  background: color-mix(in srgb, var(--success) 18%, var(--panel-bg));
+}
+
+.correctionCoverActions button:last-child {
+  background: var(--button-bg);
+}
+
+.correctionSuggestion {
+  display: grid;
+  gap: 0;
+  width: 100%;
+  min-height: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  background: var(--app-faint);
+  color: var(--app-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.correctionSuggestion:hover,
+.correctionSuggestion:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  outline: none;
+}
+
+.correctionSuggestion span {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 850;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.correctionSuggestion small {
+  overflow: hidden;
+  color: var(--app-soft);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.correctionActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.correctionActions button {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  color: var(--app-text-strong);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.correctionActions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.correctionSaveButton {
+  background: var(--success);
+  color: #fffaf2;
+}
+
+.correctionCancelButton {
+  background: var(--button-bg);
+  color: var(--button-text);
+}
+
+.correctionStatus {
+  min-height: 15px;
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+/* Contributors keep the dismiss X, so the link steps aside for it there.
+   Was 36px against a 17px-wide link; the box is now 34px wide with the glyph
+   centred in it, so the same glyph position is 8.5px further left. */
+body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .gameDetails > a {
+  right: 28px;
+}
+
+body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchName {
+  padding-right: 56px;
+}
+
+/* A contributor denies with X and is then asked for the right game -- this
+   would be a second, weaker way to say the same thing. */
+body.contributorMode .cardReportWrongButton {
+  display: none;
+}
+
+/* The contributor's expanded card carries a whole workflow -- the denial, the
+   game search with its suggestions, then the cover check -- rather than just
+   facts to read, so it gets the room that needs. */
+body.contributorMode #resultsGrid > .matchCard.isExpanded {
+  max-width: 520px;
+  max-height: 74vh;
+}
+
+/* The correction form only appears in contributor mode, and only expanded,
+   where there is room for the field and its suggestions. */
+.matchCard.isExpanded .correctionPanel {
+  display: block;
+  grid-column: 1 / -1;
+  margin-top: 8px;
+}
+
+.matchCard.isExpanded .correctionPanel[hidden] {
+  display: none;
+}
+
+/* The contributor tile is the only one carrying both the tier badge and the
+   Yes/No row, which together overflowed it. A tighter stack buys back the few
+   pixels; the player tile has room and keeps its looser spacing. */
+body.contributorMode #resultsGrid > .matchCard:not(.isExpanded) .matchBody {
+  gap: 2px;
+}
+
+/* Contributor diagnostics, and only where there is room to read them: the tile
+   is for triage, so the match source waits until the card is opened. */
+body.contributorMode .matchCard.isExpanded .matchDiagnostic,
+body.contributorMode .paligemmaHint:not([hidden]) {
+  display: block;
+}@media (max-width: 680px) {
+
+  #contributorArea {
+    max-width: 560px;
+    margin: 0 auto;
+  }
+
+  #contributorHeader strong {
+    font-size: 18px;
+  }
+
+  #contributorForm input,
+  #contributorLoginButton {
+    min-height: 50px;
+  }
+
+  .contributorReviewCard {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+
+  .contributorReviewImage {
+    width: 92px;
+    height: 92px;
+  }
+
+  .contributorReviewActions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .contributorReviewActions a {
+    grid-column: 1 / -1;
+  }
+
+  .cropViewerOverlay {
+    padding: 0;
+  }
+
+  .cropViewerWindow {
+    width: 100vw;
+    height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .cropViewerHeader {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    padding: calc(max(10px, env(safe-area-inset-top)) + 4px) 10px 10px;
+  }
+
+  .cropViewerToolbar {
+    display: grid;
+    grid-template-columns: 40px 52px 40px minmax(0, 1fr) auto;
+  }}
+
