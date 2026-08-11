@@ -25,8 +25,6 @@
   /* Height of the matches strip, and the tile size inside it. The photo
      subtracts this so the two never overlap. */
   --matches-height: 220px;
-  /* The one-time legend adds a row above the cards the first time only. */
-  --matches-height-hinted: 286px;
   --match-card-width: 236px;
   /* Grew from 112px to fit two things the tile was too small to say: why a game
      was excluded, and a 44px action row. The strip grew with it. That costs the
@@ -2484,53 +2482,6 @@ body.manualBoxMode #examplePanel {
   font-size: 13px;
 }
 
-/* Sits above the cards rather than over the photo: the photo is what it is
-   describing, so covering it to explain it would be self-defeating. */
-#overlayHint {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-
-#overlayHint[hidden] {
-  display: none;
-}
-
-/* The strip grows while the hint is up so the cards keep their full height --
-   the photo gives up the difference for one scan, then gets it back. Set on
-   body because --matches-height is what the photo subtracts. */
-body.hasOverlayHint {
-  --matches-height: var(--matches-height-hinted);
-}
-
-#overlayHint p {
-  margin: 0;
-  color: var(--app-text);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-#overlayHint strong {
-  font-weight: 800;
-}
-
-#overlayHintDismiss {
-  flex: 0 0 auto;
-  min-height: 44px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent-strong);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
 
 /* Cards scroll sideways in a single row of fixed-size tiles: a vertical list
    of tall cards showed barely one result in the space available. */
@@ -3902,12 +3853,6 @@ body.contributorMode .paligemmaHint:not([hidden]) {
   body.hasResults:not(.manualBoxMode) #boxes {
     width: calc(100vw - var(--results-column));
     height: calc(100% - var(--topchrome-height, 0px));
-  }
-
-  /* The hint is a phone-sized compromise; on a laptop the column has room for
-     it without taking anything from the photo. */
-  body.hasOverlayHint {
-    --matches-height: var(--matches-height-phone, 220px);
   }
 
   #resultsPanel {

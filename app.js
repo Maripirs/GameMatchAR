@@ -101,8 +101,6 @@ const resultsGrid = document.getElementById("resultsGrid");
 const resultCount = document.getElementById("resultCount");
 const backendWarning = document.getElementById("backendWarning");
 const resultsNotice = document.getElementById("resultsNotice");
-const overlayHint = document.getElementById("overlayHint");
-const overlayHintDismiss = document.getElementById("overlayHintDismiss");
 const showMatchesButton = document.getElementById("showMatchesButton");
 const infoButton = document.getElementById("infoButton");
 const infoPanel = document.getElementById("infoPanel");
@@ -235,6 +233,7 @@ const RANGE_CONTROLS = {
     get preset() { return timeFilter; },
     floor: 0,
     ceiling: TIME_STEPS.length - 1,
+    step: 1,
     // Slider index to the value the filter compares against.
     value: (index) => TIME_STEPS[index],
     // The preset select stores minutes, so it maps back to an index.
@@ -252,6 +251,10 @@ const RANGE_CONTROLS = {
     get preset() { return complexityFilter; },
     floor: 1,
     ceiling: 5,
+    // BGG weight is continuous, so the thumbs move in tenths of a point rather
+    // than whole bands. Everything below reads the step off the control instead
+    // of assuming 1.
+    step: 0.1,
     value: (index) => index,
     presetIndex: (value) => cleanNumber(value) || 5,
   },
@@ -294,7 +297,6 @@ backToCameraButton.addEventListener("click", backToLiveCamera);
 closeScanButton.addEventListener("click", closeActiveScan);
 backButton.addEventListener("click", closeActiveScan);
 missingBoxesButton.addEventListener("click", beginManualBoxMode);
-overlayHintDismiss?.addEventListener("click", dismissOverlayHint);
 
 // The long-tail advanced filters, folded away until asked for. They still
 // announce themselves when set, so a filter can never be quietly narrowing the
@@ -5677,10 +5679,17 @@ function refreshBestPlayerCountAvailability() {
 // lower, the slider writes both, and each reflects what the other did.
 // ---------------------------------------------------------------------------
 
+// A tenth-of-a-point slider accumulates float error fast (1 + 0.1 + 0.1 =
+// 1.2000000000000002), which both looks wrong in a label and breaks the exact
+// comparison syncRangePreset does against the select's values.
+function roundToStep(value, step) {
+  return Math.round(value / step) * step;
+}
+
 function readRange(kind) {
   const control = RANGE_CONTROLS[kind];
-  const minIndex = cleanNumber(control.min.value);
-  const maxIndex = cleanNumber(control.max.value);
+  const minIndex = roundToStep(cleanNumber(control.min.value), control.step);
+  const maxIndex = roundToStep(cleanNumber(control.max.value), control.step);
   const minSet = minIndex > control.floor;
   const maxSet = maxIndex < control.ceiling;
 
@@ -5704,10 +5713,13 @@ function handleRangeInput(event) {
   const maxIndex = cleanNumber(control.max.value);
 
   if (minIndex >= maxIndex) {
+    // One step apart, not one whole unit -- on the weight slider a unit is ten
+    // steps, so nudging a thumb into its partner threw the other end a full
+    // band across the scale.
     if (event.target === control.min) {
-      control.min.value = String(maxIndex - 1);
+      control.min.value = String(roundToStep(maxIndex - control.step, control.step));
     } else {
-      control.max.value = String(minIndex + 1);
+      control.max.value = String(roundToStep(minIndex + control.step, control.step));
     }
   }
 
@@ -5780,28 +5792,43 @@ function describeTimeRange(range) {
   return `Between ${range.min} and ${range.max} min`;
 }
 
+// One decimal, and no trailing ".0" -- BGG publishes weight to two decimals but
+// the tenth is where the meaning is; the hundredth is noise on a slider. Bare,
+// unlike formatWeight() below, which renders the card stat as "2.2 / 5".
+function formatWeightValue(value) {
+  return Number(value).toFixed(1).replace(/\.0$/, "");
+}
+
+// The band an upper bound *admits*, for the parenthetical only -- the filter
+// itself never uses these. A cap of 3.0 lets in everything below 3, so it reads
+// as "medium", not "heavy": the boundary belongs to the band underneath it.
+// (The old "heavier than" message hit the same off-by-one and solved it with a
+// bare `range.max - 1`.)
+function weightBandName(value) {
+  const band = Math.floor(Number(value) - 0.001);
+  return WEIGHT_BANDS[Math.min(4, Math.max(1, band))] || "";
+}
+
 function describeWeightRange(range) {
   if (!range.minSet && !range.maxSet) {
     return "Any complexity";
   }
 
-  // Bands sit between the thumbs, so a range spanning indices 1-3 covers the
-  // two bands named at 1 and 2.
-  const names = [];
-
-  for (let band = range.minIndex; band < range.maxIndex; band += 1) {
-    names.push(WEIGHT_BANDS[band]);
+  // Whole-point bands were too coarse to be a filter. BGG weight is continuous
+  // 1.00-5.00 and the catalog bunches up: Santorini 1.9, Juicy Fruits 2.0,
+  // Verdant 2.1, Clank! 2.2 -- four games a whole-point step cannot tell apart,
+  // because they all sit inside "Light to medium". The slider moves in tenths
+  // now and says the number, with the band kept as a parenthetical so the scale
+  // still means something to someone who has not memorised it.
+  if (!range.minSet) {
+    return `Up to ${formatWeightValue(range.max)} (${weightBandName(range.max).toLowerCase()})`;
   }
 
-  if (names.length === 1) {
-    return names[0];
+  if (!range.maxSet) {
+    return `${formatWeightValue(range.min)} and up`;
   }
 
-  if (names.length === 2) {
-    return `${names[0]} or ${names[1].toLowerCase()}`;
-  }
-
-  return `${names[0]} to ${names[names.length - 1].toLowerCase()}`;
+  return `${formatWeightValue(range.min)} to ${formatWeightValue(range.max)}`;
 }
 
 function initRangeControls() {
@@ -6531,12 +6558,21 @@ function checkWeightRange(details, range) {
     return { fits: false, reason: "No weight data" };
   }
 
+  // The number, not the band. "Heavier than medium" was true of a 3.1 and a 4.9
+  // alike; "2.2, over 2.0" tells you how far out it is and whether nudging the
+  // slider would bring it back.
   if (range.minSet && weight < range.min) {
-    return { fits: false, reason: `Lighter than ${WEIGHT_BANDS[range.min]?.toLowerCase()}` };
+    return {
+      fits: false,
+      reason: `${formatWeightValue(weight)}, under ${formatWeightValue(range.min)}`,
+    };
   }
 
   if (range.maxSet && weight > range.max) {
-    return { fits: false, reason: `Heavier than ${WEIGHT_BANDS[range.max - 1]?.toLowerCase()}` };
+    return {
+      fits: false,
+      reason: `${formatWeightValue(weight)}, over ${formatWeightValue(range.max)}`,
+    };
   }
 
   return { fits: true, reason: "" };
@@ -6907,52 +6943,6 @@ function matchSortScore(match) {
   return cleanNumber(match?.rank_score ?? match?.score);
 }
 
-// Tapping a box is now the primary way into a match, and a canvas offers no
-// affordance to advertise it. Hint once, then never again.
-const BOX_TAP_HINT_KEY = "gamematchBoxTapHintSeen";
-
-function boxTapHintSeen() {
-  try {
-    return Boolean(localStorage.getItem(BOX_TAP_HINT_KEY));
-  } catch (error) {
-    // A private-mode browser just means the hint shows again; not worth failing.
-    return false;
-  }
-}
-
-// The hint this replaces was a string appended to a status line, and both the
-// function producing it and the summary it was appended to had become
-// unreachable -- so the flag was being set on first tap while nothing was ever
-// shown. The legend lives here now as well, since the outline colours are the
-// one thing a player cannot work out by looking.
-function showOverlayHintOnce() {
-  if (!overlayHint || boxTapHintSeen() || contributorMode) {
-    return;
-  }
-  overlayHint.hidden = false;
-  document.body.classList.add("hasOverlayHint");
-  redrawActiveDetections();
-}
-
-function dismissOverlayHint() {
-  if (!overlayHint || overlayHint.hidden) {
-    return;
-  }
-  overlayHint.hidden = true;
-  document.body.classList.remove("hasOverlayHint");
-  markBoxTapHintSeen();
-  // The photo area just changed size, so the overlay has to be re-fitted to it.
-  redrawActiveDetections();
-}
-
-function markBoxTapHintSeen() {
-  try {
-    localStorage.setItem(BOX_TAP_HINT_KEY, "1");
-  } catch (error) {
-    // A private-mode browser just means the hint shows again; not worth failing.
-  }
-}
-
 function detectionMatchStates() {
   const states = new Map();
   let anyFits = false;
@@ -7103,10 +7093,6 @@ function handleDetectionTap(event) {
     return;
   }
 
-  // Tapping a box is the thing the hint was advertising, so doing it retires
-  // the hint -- both the flag and whatever is still on screen.
-  dismissOverlayHint();
-  markBoxTapHintSeen();
   openMatchesForCard(cardApi);
 }
 
@@ -7672,10 +7658,6 @@ function updateResultStats() {
   resultCount.textContent = filters.hasAny
     ? `${matched} of ${currentResultCards.length} fit your filters`
     : `${checked} of ${currentResultCards.length} recognised`;
-
-  // Only once the scan has actually answered: a legend explaining highlighted
-  // versus grey means nothing while every box is still waiting.
-  showOverlayHintOnce();
 }
 
 // The matches panel now stays closed after a scan, so its "2/5 fit" counter is

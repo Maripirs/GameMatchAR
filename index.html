@@ -18,7 +18,7 @@
        every single load whether or not one exists -- it was a guaranteed 404
        per visit. -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%233e63ff%27/%3E%3Ccircle cx=%2711%27 cy=%2711%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2721%27 cy=%2721%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2721%27 cy=%2711%27 r=%272.6%27 fill=%27white%27/%3E%3Ccircle cx=%2711%27 cy=%2721%27 r=%272.6%27 fill=%27white%27/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="style.css?v=20260810-ui5" />
+  <link rel="stylesheet" href="style.css?v=20260811-ui6" />
 </head>
 <body>
   <main id="stage" aria-label="GameMatch">
@@ -200,8 +200,8 @@
           <span id="weightRangeLabel">Any complexity</span>
           <div class="rangeSlider" data-range="weight">
             <div class="rangeTrack"><div class="rangeFill" data-range-fill="weight"></div></div>
-            <input id="weightRangeMin" type="range" min="1" max="5" step="1" value="1" aria-label="Lightest complexity" />
-            <input id="weightRangeMax" type="range" min="1" max="5" step="1" value="3" aria-label="Heaviest complexity" />
+            <input id="weightRangeMin" type="range" min="1" max="5" step="0.1" value="1" aria-label="Lightest complexity" />
+            <input id="weightRangeMax" type="range" min="1" max="5" step="0.1" value="3" aria-label="Heaviest complexity" />
           </div>
         </div>
         <!-- Theme and mechanic are open vocabularies -- 85 and 191 values --
@@ -360,18 +360,6 @@
         <button id="missingBoxesButton" type="button">Missing a game?</button>
       </div>
       <div id="resultsNotice" class="resultsNotice" hidden></div>
-      <!-- Shown once, on a player's first set of results. The outline colours
-           are the app's whole visual language and were explained only inside
-           the info sheet, behind a 34px "i" that most people never open. The
-           tap affordance has the same problem: a canvas advertises nothing. -->
-      <div id="overlayHint" hidden>
-        <p>
-          <strong>Highlighted</strong> boxes fit your filters, grey ones do not,
-          and a dashed outline means the match was uncertain.
-          <strong>Tap a box</strong> for its card.
-        </p>
-        <button id="overlayHintDismiss" type="button">Got it</button>
-      </div>
       <div id="resultsGrid"></div>
     </section>
     <button id="showMatchesButton" type="button" hidden>Matches</button>
@@ -425,6 +413,6 @@
       window.GAMEMATCH_API_BASE = base;
     }
   </script>
-  <script type="module" src="app.js?v=20260810-ui5"></script>
+  <script type="module" src="app.js?v=20260811-ui6"></script>
 </body>
 </html>

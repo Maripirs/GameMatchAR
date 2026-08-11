@@ -1116,12 +1116,12 @@ def run(headed):
         # The select and the slider are two views of one range, so the sliders
         # must open on whatever the select already says -- not on a second copy
         # of the defaults that could drift from it. The wording differs on
-        # purpose: the select names the cap ("Medium"), the label names every
-        # band the range covers ("Light or medium"), which is the same set.
+        # purpose: the select names the cap ("Medium"), the label states the
+        # number that cap is (3.0) with the band it admits in parentheses.
         start = range_state(rp)
         c.check(
             "the sliders start from the basic selects",
-            start["time"] == "Up to 30 min" and start["weight"] == "Light or medium",
+            start["time"] == "Up to 30 min" and start["weight"] == "Up to 3 (medium)",
             f"({start})",
         )
 
@@ -1162,23 +1162,35 @@ def run(headed):
             f"({range_state(rp)})",
         )
 
+        # Whole-point bands could not separate the catalog: Santorini 1.9,
+        # Juicy Fruits 2.0, Verdant 2.1 and Clank! 2.2 all sit inside one band,
+        # so the slider moves in tenths and says the number.
         set_range(rp, "weight", "Max", 3)
         set_range(rp, "weight", "Min", 1)
         c.check(
-            "two complexity bands read as words",
-            range_state(rp)["weight"] == "Light or medium",
+            "an upper bound states the number and the band it admits",
+            range_state(rp)["weight"] == "Up to 3 (medium)",
             f"({range_state(rp)})",
         )
         set_range(rp, "weight", "Min", 2)
         c.check(
-            "one band names itself",
-            range_state(rp)["weight"] == "Medium",
+            "a bounded range states both ends",
+            range_state(rp)["weight"] == "2 to 3",
             f"({range_state(rp)})",
         )
         set_range(rp, "weight", "Max", 5)
         c.check(
-            "three or more read as a span",
-            range_state(rp)["weight"] == "Medium to very heavy",
+            "a lower bound alone reads as open-ended",
+            range_state(rp)["weight"] == "2 and up",
+            f"({range_state(rp)})",
+        )
+        # The point of the change: a tenth is reachable, and 2.2 vs 2.0 is the
+        # difference between Clank! and Juicy Fruits.
+        set_range(rp, "weight", "Min", 1)
+        set_range(rp, "weight", "Max", 2.1)
+        c.check(
+            "the slider resolves to a tenth of a point",
+            range_state(rp)["weight"] == "Up to 2.1 (medium)",
             f"({range_state(rp)})",
         )
 
@@ -1489,21 +1501,6 @@ def run(headed):
                 }"""
             ),
             f"(aria {sp.eval_on_selector('#resultsGrid .matchCard', 'e => e.ariaLabel')!r})",
-        )
-        # The legend for the outline colours lived only in the info sheet,
-        # behind a 34px "i". The hint that was meant to teach the tap gesture
-        # had become unreachable code that set its own "seen" flag.
-        c.check(
-            "first results explain the outlines and the tap",
-            not sp.eval_on_selector("#overlayHint", "e => e.hidden"),
-        )
-        c.check(
-            "and dismissing it is remembered",
-            sp.evaluate(
-                """() => { document.querySelector('#overlayHintDismiss').click();
-                     return document.querySelector('#overlayHint').hidden
-                       && Boolean(localStorage.getItem('gamematchBoxTapHintSeen')); }"""
-            ),
         )
         # A player cannot act on 0.982, and it reads as a score for the game.
         c.check(
