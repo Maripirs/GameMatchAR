@@ -688,6 +688,17 @@ def run(headed):
             )
             == 0,
         )
+        # The other half of hiding DINO from players: a contributor must still
+        # have it. Hiding it from everyone would look identical in the player
+        # check below and quietly remove the annotation tool.
+        con.eval_on_selector("#missingBoxesButton", "e => e.click()")
+        con.wait_for_timeout(250)
+        c.check(
+            "a contributor still gets the DINO suggestion button",
+            not con.eval_on_selector("#dinoSuggestButton", "e => e.hidden"),
+        )
+        con.eval_on_selector("#exitModifierButton", "e => e.click()")
+        con.wait_for_timeout(200)
 
         print("\nYes")
         con.eval_on_selector("#resultsGrid .matchCard .feedbackConfirmButton", "e => e.click()")
@@ -1532,6 +1543,21 @@ def run(headed):
         c.check(
             "contributor sign-in is not shown to players",
             sp.eval_on_selector("#contributorArea", "e => e.hidden"),
+        )
+        # Grounding DINO is a transformer on the backend host, so M0 closed the
+        # anonymous route -- but the button kept calling it and erroring. Manual
+        # box drawing is the path that matters to a player and stays open.
+        sp.eval_on_selector("#missingBoxesButton", "e => e.click()")
+        sp.wait_for_timeout(250)
+        c.check(
+            "a player can still draw a box the scanner missed",
+            sp.evaluate("() => document.body.classList.contains('manualBoxMode')"),
+        )
+        c.check(
+            "but is not offered the DINO route that would 404 for them",
+            sp.eval_on_selector("#dinoSuggestButton", "e => e.hidden")
+            and sp.eval_on_selector("#dismissDinoSuggestButton", "e => e.hidden"),
+            f"(suggest hidden {sp.eval_on_selector('#dinoSuggestButton', 'e => e.hidden')})",
         )
         sp.close()
 

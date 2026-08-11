@@ -738,6 +738,20 @@ async function processImageCanvas(sourceCanvas, displayElement) {
   }
 }
 
+// Grounding DINO is a transformer running on the backend host, which makes an
+// anonymous call to it a cheap denial-of-service -- so M0 put the public route
+// behind GAMEMATCH_PUBLIC_DINO_ENABLED and left it unset. The button stayed
+// visible to players and simply errored; docs/SECURITY.md flagged hiding it as
+// a frontend follow-up. This is that follow-up.
+//
+// The test matches what suggestDinoBoxes actually needs: without both of these
+// it falls back to the public path, which is the one that 404s. Drawing a box
+// by hand is untouched and still open to everyone -- that is the path that gets
+// a missed game into the results, and it costs the host nothing.
+function canSuggestDinoBoxes() {
+  return Boolean(contributorMode && contributorPassword);
+}
+
 function beginManualBoxMode() {
   if (!activeSourceCanvas || !activeDisplayElement) {
     return;
@@ -755,7 +769,7 @@ function beginManualBoxMode() {
   modifierPanY = 0;
   document.body.classList.add("manualBoxMode");
   dinoSuggestButton.textContent = DINO_BUTTON_LABEL;
-  dismissDinoSuggestButton.hidden = Boolean(
+  dismissDinoSuggestButton.hidden = !canSuggestDinoBoxes() || Boolean(
     activeSourceCanvas.dinoSuggestionCompleted
     || activeSourceCanvas.dinoSuggestionDismissed
   );
@@ -7807,7 +7821,8 @@ function setControlsEnabled(enabled) {
   zoomOutButton.hidden = !manualBoxMode;
   zoomInButton.hidden = !manualBoxMode;
   dinoSuggestButton.hidden = (
-    !manualBoxMode
+    !canSuggestDinoBoxes()
+    || !manualBoxMode
     || Boolean(activeSourceCanvas?.dinoSuggestionCompleted)
     || Boolean(activeSourceCanvas?.dinoSuggestionDismissed)
   );
