@@ -2112,16 +2112,14 @@ function createMatchCard(cropCanvas, detection, index) {
   expandButton.type = "button";
   expandButton.textContent = "See more";
   expandButton.setAttribute("aria-expanded", "false");
-  // Directly under the details it disputes, so it reads as a footnote to the
-  // facts above it rather than as another action competing with them.
-  // The tile's two actions share a row rather than being an inline link and an
-  // absolutely-positioned one. Both need a 44px hit area; as separate children
-  // that meant two invisible pseudo-element pads overlapping each other and the
-  // card's own click target. One row, sized once, is easier to reason about.
+  // Every tile action lives in one row. A contributor sees Yes/No on the left
+  // and See more on the right; a player sees Wrong game? and See more. Keeping
+  // that row together prevents the compact contributor card from clipping the
+  // final action below its fixed-height tile.
   const cardActions = document.createElement("div");
   cardActions.className = "cardActions";
-  cardActions.append(reportWrongButton, expandButton);
-  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, findGameButton, feedbackActions, correctionPanel, cardActions);
+  cardActions.append(reportWrongButton, feedbackActions, expandButton);
+  body.append(name, meta, matchDiagnostic, score, paligemmaHint, fit, details, findGameButton, correctionPanel, cardActions);
   card.append(dismissButton, cropCanvas, body);
   card.tabIndex = 0;
   // Lead with the game, fall back to the position. A screen reader announcing
@@ -2455,7 +2453,9 @@ function createMatchCard(cropCanvas, detection, index) {
     selectMatchCard(cardApi);
 
     if (contributorMode) {
-      openCropViewer(cropCanvas, name.textContent);
+      openCropViewer(cropCanvas, name.textContent, {
+        onAdjust: () => openContributorCropEditor(cardApi),
+      });
       return;
     }
 
@@ -2736,7 +2736,7 @@ function hideCropZoomPreview() {
   }
 }
 
-function openCropViewer(source, titleText = "Crop") {
+function openCropViewer(source, titleText = "Crop", { onAdjust = null } = {}) {
   const sourceSize = drawableSourceSize(source);
 
   if (!sourceSize.width || !sourceSize.height) {
@@ -2746,7 +2746,7 @@ function openCropViewer(source, titleText = "Crop") {
   hideCropZoomPreview();
 
   const viewer = getCropViewer();
-  const { overlay, canvas, title, scroller } = viewer;
+  const { overlay, canvas, title, scroller, adjustButton } = viewer;
   const context = canvas.getContext("2d");
 
   title.textContent = titleText || "Crop";
@@ -2754,6 +2754,7 @@ function openCropViewer(source, titleText = "Crop") {
   canvas.height = sourceSize.height;
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.drawImage(source, 0, 0);
+  adjustButton.hidden = typeof onAdjust !== "function";
   overlay.hidden = false;
   document.body.classList.add("cropViewerOpen");
 
@@ -2770,6 +2771,7 @@ function openCropViewer(source, titleText = "Crop") {
     coverZoom,
     zoom: initialZoom,
     drag: null,
+    onAdjust,
   };
 
   setCropViewerZoom(initialZoom, { preserveCenter: false });
@@ -2797,6 +2799,7 @@ function getCropViewer() {
   const zoomValue = document.createElement("span");
   const zoomInButton = document.createElement("button");
   const resetButton = document.createElement("button");
+  const adjustButton = document.createElement("button");
   const closeButton = document.createElement("button");
   const scroller = document.createElement("div");
   const canvas = document.createElement("canvas");
@@ -2816,17 +2819,22 @@ function getCropViewer() {
   zoomOutButton.type = "button";
   zoomInButton.type = "button";
   resetButton.type = "button";
+  adjustButton.type = "button";
   closeButton.type = "button";
   zoomOutButton.textContent = "-";
   zoomInButton.textContent = "+";
   resetButton.textContent = "Reset";
+  adjustButton.textContent = "Adjust crop";
   closeButton.textContent = "Close";
   zoomOutButton.setAttribute("aria-label", "Zoom out");
   zoomInButton.setAttribute("aria-label", "Zoom in");
   resetButton.setAttribute("aria-label", "Reset zoom");
+  adjustButton.setAttribute("aria-label", "Adjust this crop on the scan");
   closeButton.setAttribute("aria-label", "Close crop viewer");
+  adjustButton.className = "cropViewerAdjustButton";
+  adjustButton.hidden = true;
 
-  toolbar.append(zoomOutButton, zoomValue, zoomInButton, resetButton, closeButton);
+  toolbar.append(adjustButton, zoomOutButton, zoomValue, zoomInButton, resetButton, closeButton);
   header.append(title, toolbar);
   scroller.append(canvas);
   panel.append(header, scroller);
@@ -2847,6 +2855,11 @@ function getCropViewer() {
       window.requestAnimationFrame(centerCropViewer);
     }
   });
+  adjustButton.addEventListener("click", () => {
+    const onAdjust = cropViewerState?.onAdjust;
+    closeCropViewer();
+    onAdjust?.();
+  });
   scroller.addEventListener("wheel", handleCropViewerWheel, { passive: false });
   canvas.addEventListener("pointerdown", startCropViewerPan);
   canvas.addEventListener("pointermove", moveCropViewerPan);
@@ -2859,6 +2872,7 @@ function getCropViewer() {
     title,
     scroller,
     zoomValue,
+    adjustButton,
   };
 
   return cropViewer;
@@ -2999,6 +3013,25 @@ function closeCropViewer() {
   cropViewer.overlay.hidden = true;
   cropViewerState = null;
   document.body.classList.remove("cropViewerOpen");
+}
+
+// A crop comes from a box on the original scan. Editing that source box is the
+// useful operation: it regenerates the crop, reruns recognition, and records
+// the contributor annotation with the corrected bounds.
+function openContributorCropEditor(card) {
+  if (
+    !contributorMode
+    || !contributorPassword
+    || !card?.detection
+    || !activeSourceCanvas?.lastDetections?.includes(card.detection)
+  ) {
+    return;
+  }
+
+  beginManualBoxMode();
+  if (manualBoxMode) {
+    selectBoxForEditing(card.detection);
+  }
 }
 
 function isCropViewerOpen() {
@@ -4052,7 +4085,10 @@ function setContributorMode(enabled) {
   contributorModeState.textContent = contributorMode
     ? (contributorRole === "admin" ? "Admin" : "On")
     : "Off";
-  contributorTabs.hidden = !contributorMode;
+  // A regular contributor has one possible view: their active session. A
+  // one-item tab strip says nothing and wastes room, so navigation appears
+  // only when an admin can actually switch between review areas.
+  contributorTabs.hidden = !contributorMode || contributorRole !== "admin";
   latestContributorTabButton.hidden = !contributorMode || contributorRole !== "admin";
   detectorContributorTabButton.hidden = !contributorMode || contributorRole !== "admin";
   contributorLoginButton.hidden = contributorMode;
@@ -4321,7 +4357,6 @@ function createDetectorReviewCard(annotation, { untouched = false } = {}) {
   const rejectButton = document.createElement("button");
   const status = document.createElement("div");
   card.className = "contributorReviewCard";
-  card.classList.toggle("isFlaggedForReview", Boolean(reference.flagged_for_review));
   image.className = "contributorReviewImage";
   body.className = "contributorReviewBody";
   meta.className = "contributorReviewMeta";

@@ -669,6 +669,12 @@ body.contributorMode #infoButton {
   outline: none;
 }
 
+.cropViewerToolbar .cropViewerAdjustButton {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel-bg-strong));
+  color: var(--accent-strong);
+}
+
 .cropViewerZoomValue {
   min-width: 46px;
   color: var(--accent-strong);
@@ -1024,6 +1030,6 @@ body.contributorMode .paligemmaHint:not([hidden]) {
 
   .cropViewerToolbar {
     display: grid;
-    grid-template-columns: 40px 52px 40px minmax(0, 1fr) auto;
+    grid-template-columns: auto 40px 52px 40px minmax(0, 1fr) auto;
   }}
 

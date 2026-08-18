@@ -60,6 +60,75 @@ def stub_backend(page):
     page.route("**/match", match)
 
 
+def stub_contributor_login(page, role="contributor"):
+    """Grant one deterministic contributor role without the real backend."""
+    page.route("**/contributor-login", lambda route: route.fulfill(
+        status=200,
+        content_type="application/json",
+        body=json.dumps({"ok": True, "role": role}),
+    ))
+
+
+def stub_detector_review_queue(page):
+    """Provide an edited and an untouched full-image annotation for review."""
+    edited = {
+        "annotation_id": "needs-review-scan",
+        "accepted_boxes": [{"x": 0.1, "y": 0.12, "width": 0.42, "height": 0.58}],
+        "manual_boxes": [{"x": 0.6, "y": 0.2, "width": 0.26, "height": 0.5}],
+        "removed_boxes": [],
+        "image_url": "/contributor/detector-annotation-image?annotation_id=needs-review-scan",
+    }
+    untouched = {
+        "annotation_id": "unverified-scan",
+        "accepted_boxes": [{"x": 0.2, "y": 0.16, "width": 0.48, "height": 0.6}],
+        "manual_boxes": [],
+        "removed_boxes": [],
+        "image_url": "/contributor/detector-annotation-image?annotation_id=unverified-scan",
+    }
+
+    def detector_route(route):
+        url = route.request.url
+        if "detector-training-status" in url:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "ready": False,
+                    "reasons": ["Need more approved annotations."],
+                    "counts": {"needs_review": 1, "unverified": 1},
+                    "job": {"status": "idle"},
+                }),
+            )
+        elif "status=needs_review" in url:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "annotations": [edited], "total": 1,
+                    "counts": {"needs_review": 1, "unverified": 1},
+                }),
+            )
+        elif "status=unverified" in url:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "annotations": [untouched], "total": 1,
+                    "counts": {"needs_review": 1, "unverified": 1},
+                }),
+            )
+        elif "detector-annotation-image" in url:
+            route.fulfill(
+                status=200,
+                content_type="image/svg+xml",
+                body='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"></svg>',
+            )
+        else:
+            route.fallback()
+
+    page.route("**/contributor/**", detector_route)
+
+
 def stub_weak_matches(page):
     """Re-answer /match with results too shaky to clear the confidence bar.
 
@@ -634,6 +703,52 @@ def run(headed):
             f'(count "{sparse_page.inner_text("#resultCount")}")',
         )
 
+        print("\ncontributor access")
+        # A contributor only has one destination. Rendering a tab bar with one
+        # option was visual noise, while hiding every tab for them must not
+        # take away the admin review tabs.
+        regular_context = browser.new_context(viewport=VIEWPORT, has_touch=True)
+        regular = regular_context.new_page()
+        regular.on("pageerror", lambda e: errors.append(str(e)))
+        stub_backend(regular)
+        stub_contributor_login(regular)
+        regular.goto(f"{base}/#contributor", wait_until="networkidle", timeout=60000)
+        regular.fill("#contributorPassword", "contributor-test")
+        regular.click("#contributorLoginButton")
+        regular.wait_for_timeout(300)
+        c.check(
+            "a contributor does not see a one-item access tab bar",
+            regular.evaluate(
+                """() => document.body.classList.contains('contributorMode')
+                    && document.getElementById('contributorTabs').hidden
+                    && !document.getElementById('contributorModePanel').hidden""",
+            ),
+        )
+        regular_context.close()
+
+        print("\ndetector review")
+        detector_context = browser.new_context(viewport=VIEWPORT, has_touch=True)
+        detector_context.add_init_script(
+            "() => localStorage.setItem('gamematchForceContributor', '1')"
+        )
+        detector = detector_context.new_page()
+        detector.on("pageerror", lambda e: errors.append(str(e)))
+        stub_backend(detector)
+        stub_detector_review_queue(detector)
+        detector.goto(f"{base}/", wait_until="networkidle", timeout=60000)
+        detector.click('[data-contributor-tab="detector"]')
+        detector.wait_for_timeout(400)
+        c.check(
+            "the admin detector queue renders edited and untouched scans",
+            detector.evaluate(
+                """() => ({
+                    edited: document.querySelectorAll('#detectorReviewGrid .contributorReviewCard').length,
+                    untouched: document.querySelectorAll('#untouchedDetectorGrid .contributorReviewCard').length,
+                })""",
+            ) == {"edited": 1, "untouched": 1},
+        )
+        detector_context.close()
+
         print("\ncontributor view")
         con = context.new_page()
         con.on("pageerror", lambda e: errors.append(str(e)))
@@ -677,8 +792,24 @@ def run(headed):
             shown_display(con, "#resultsGrid .matchCard .matchDiagnostic") == "none",
         )
         c.check(
-            "See more without having to answer first",
-            shown_display(con, "#resultsGrid .matchCard .cardExpandButton") != "none",
+            "Yes/No and See more coexist in one action row",
+            con.evaluate(
+                """() => {
+                  const card = document.querySelector('#resultsGrid .matchCard');
+                  const row = card?.querySelector('.cardActions');
+                  const feedback = card?.querySelector('.feedbackActions');
+                  const expand = card?.querySelector('.cardExpandButton');
+                  if (!card || !row || !feedback || !expand
+                      || getComputedStyle(feedback).display === 'none'
+                      || getComputedStyle(expand).display === 'none') return false;
+                  const feedbackRect = feedback.getBoundingClientRect();
+                  const expandRect = expand.getBoundingClientRect();
+                  const cardRect = card.getBoundingClientRect();
+                  return row.contains(feedback) && row.contains(expand)
+                    && feedbackRect.right <= expandRect.left + 1
+                    && expandRect.right <= cardRect.right + 1;
+                }""",
+            ),
         )
         c.check(
             "no contributor tile overflows",
@@ -688,6 +819,26 @@ def run(headed):
             )
             == 0,
         )
+        con.locator("#resultsGrid .matchCard .matchCropCanvas").first.click()
+        con.wait_for_timeout(150)
+        c.check(
+            "a contributor can adjust a crop from its viewer",
+            con.eval_on_selector(
+                ".cropViewerAdjustButton",
+                "e => !e.hidden && getComputedStyle(e).display !== 'none'",
+            ),
+        )
+        con.eval_on_selector(".cropViewerAdjustButton", "e => e.click()")
+        con.wait_for_timeout(200)
+        c.check(
+            "adjusting a crop opens its selected source box",
+            con.evaluate(
+                """() => document.body.classList.contains('manualBoxMode')
+                    && !document.querySelector('#boxEditActions').hidden""",
+            ),
+        )
+        con.eval_on_selector("#finishModifyingButton", "e => e.click()")
+        con.wait_for_timeout(200)
         # The other half of hiding DINO from players: a contributor must still
         # have it. Hiding it from everyone would look identical in the player
         # check below and quietly remove the annotation tool.

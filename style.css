@@ -2087,9 +2087,15 @@ html[data-theme="light"] #resultsGrid > .matchCard.isExpanded {
   font-weight: 600;
 }
 
-/* One row: OK/X on the left, nothing shouting on the right. */
+/* One row: contributor Yes/No stays beside See more instead of pushing it
+   below a compact card's clipping boundary. */
 .matchCard.isExpanded .feedbackActions {
   margin-top: 4px;
+}
+
+.matchCard .cardActions .feedbackActions {
+  flex: 0 0 auto;
+  margin-top: 0;
 }
 
 /* A player is never asked to grade the match, so the row that carried the pair
