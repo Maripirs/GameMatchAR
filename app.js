@@ -100,6 +100,7 @@ const resultsPanel = document.getElementById("resultsPanel");
 const resultsGrid = document.getElementById("resultsGrid");
 const resultCount = document.getElementById("resultCount");
 const backendWarning = document.getElementById("backendWarning");
+const detectorLoadingNotice = document.getElementById("detectorLoadingNotice");
 const resultsNotice = document.getElementById("resultsNotice");
 const showMatchesButton = document.getElementById("showMatchesButton");
 const infoButton = document.getElementById("infoButton");
@@ -1849,13 +1850,26 @@ function createDetectorAnnotationId() {
 
 function ensureDetectorLoaded() {
   if (!detectorLoadPromise) {
-    detectorLoadPromise = detector.load().catch((error) => {
-      detectorLoadPromise = null;
-      throw error;
-    });
+    setDetectorLoadingVisible(true);
+    detectorLoadPromise = detector
+      .load()
+      .then(() => {
+        setDetectorLoadingVisible(false);
+      })
+      .catch((error) => {
+        detectorLoadPromise = null;
+        setDetectorLoadingVisible(false);
+        throw error;
+      });
   }
 
   return detectorLoadPromise;
+}
+
+function setDetectorLoadingVisible(visible) {
+  if (detectorLoadingNotice) {
+    detectorLoadingNotice.hidden = !visible;
+  }
 }
 
 function ensureBackendMatcherReady({ force = false } = {}) {

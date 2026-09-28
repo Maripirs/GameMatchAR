@@ -2301,6 +2301,25 @@ body:not(.contributorMode) .matchCard .feedbackActions {
   display: none;
 }
 
+#detectorLoadingNotice {
+  position: fixed;
+  top: calc(var(--topchrome-height, 48px) + 8px);
+  right: 12px;
+  left: 12px;
+  z-index: 6;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-bg-strong));
+  color: var(--app-text-strong);
+  font-size: 12.5px;
+  backdrop-filter: blur(14px);
+}
+
+#detectorLoadingNotice[hidden] {
+  display: none;
+}
+
 /* Pinned to the very bottom of the sheet, centred, below every section. */
 #infoFooter {
   margin: 18px 0 0;
